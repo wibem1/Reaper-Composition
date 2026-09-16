@@ -16,11 +16,35 @@ Neue Funktionen und Fehlerbehebungen werden in die passende vorhandene Struktur 
 ### Kurze Entwicklungszyklen
 Bevorzugt ReaScript/Lua und REAPER-eigene Funktionen. Kompilierte Komponenten nur, wenn eine benötigte Funktion anders nachweislich nicht sinnvoll erreichbar ist.
 
+### Verbindlicher Arbeitsordner
+Die aktive Entwicklung erfolgt über **einen festen lokalen Arbeitsordner**, aus dem REAPER die ReaScripts direkt lädt. Es wird nicht für jeden Entwicklungsstand ein neues Installationspaket erzeugt.
+
+Normaler Zyklus:
+
+`Code im Arbeitsordner aktualisieren -> Script in REAPER neu ausführen/neu laden -> testen`
+
+Der Arbeitsordner ist die lokale Entwicklungsinstanz. GitHub ist die versionierte Referenz und Sicherung. Freigegebene zusammenhängende Änderungen werden nach erfolgreicher Prüfung sauber in GitHub dokumentiert.
+
+Zielstruktur des lokalen Ordners:
+
+```text
+Reaper-Composition/
+  scripts/
+  bridge/
+  tests/
+  docs/
+```
+
+REAPER-Aktionen sollen möglichst direkt auf die Dateien unter `scripts/` dieses Ordners zeigen. Dadurch sind bei normalen Änderungen weder Kompilation noch Neuinstallation erforderlich.
+
 ### Installation minimieren
-Ziel ist eine einmalige Einrichtung. Danach sollen normale Updates möglichst nur Script-/Bridge-Dateien ersetzen bzw. aktualisieren. Keine wiederholten großen Build- und Installationsprozeduren.
+Ziel ist eine einmalige Einrichtung des Arbeitsordners und der REAPER-Aktionen. Danach werden normale Updates im bestehenden Arbeitsordner vorgenommen. Keine wiederholten großen Build- und Installationsprozeduren.
+
+### Keine Kompilation im Normalbetrieb
+Lua/ReaScript ist der Standard. Eine kompilierte Komponente wird nur eingeführt, wenn eine konkret benötigte Funktion mit ReaScript bzw. einer leichten Bridge nachweislich nicht sinnvoll lösbar ist. Eine solche Architekturänderung wird vorher ausdrücklich begründet und dokumentiert.
 
 ### Versionsdisziplin
-Jeder freigegebene Teststand erhält eine eindeutige Versions-/Buildnummer. Git-Commits beschreiben den tatsächlichen zusammenhängenden Entwicklungsschritt.
+Jeder freigegebene Teststand erhält eine eindeutige Versions-/Buildnummer. Git-Commits beschreiben den tatsächlichen zusammenhängenden Entwicklungsschritt. Änderungen innerhalb des Arbeitszyklus erfordern nicht automatisch eine neue Installationsversion.
 
 ### Dokumentation zuerst lesen
 Vor Änderungen: README.md, DEVELOPMENT.md und relevante Dateien unter docs/ lesen. Nach wesentlichen Architekturentscheidungen, Fehlerfällen oder Änderungen DEVELOPMENT.md aktualisieren.
