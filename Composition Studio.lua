@@ -1,10 +1,10 @@
 -- @description Composition Studio
--- @version 0.2-test8
+-- @version 0.2-test9
 -- @author Klangwerke
 -- @about Dockable AI chat and direct MIDI composition in REAPER.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.2-test8"
+local VERSION="0.2-test9"
 local EXT_SECTION,EXT_KEY="CompositionStudio","OpenAIAPIKey"
 
 if type(reaper.ImGui_CreateContext)~="function" then
@@ -18,19 +18,10 @@ local input=""
 local busy=false
 local history={{role="KI",text="Composition Studio ist bereit. Du kannst mit mir über die Musik sprechen oder mir einen Kompositionsauftrag geben."}}
 
--- ReaImGui 0.10: font size moved from CreateFont to PushFont.
 local font=nil
-if type(reaper.ImGui_CreateFont)=="function" then
-  local ok,f=pcall(reaper.ImGui_CreateFont,"sans-serif")
-  if ok then font=f end
-end
+if type(reaper.ImGui_CreateFont)=="function" then local ok,f=pcall(reaper.ImGui_CreateFont,"sans-serif"); if ok then font=f end end
 if font and type(reaper.ImGui_Attach)=="function" then pcall(reaper.ImGui_Attach,ctx,font) end
-
-local function push_font()
-  if not font or type(reaper.ImGui_PushFont)~="function" then return false end
-  local ok=pcall(reaper.ImGui_PushFont,ctx,font,18)
-  return ok
-end
+local function push_font() if not font or type(reaper.ImGui_PushFont)~="function" then return false end local ok=pcall(reaper.ImGui_PushFont,ctx,font,18); return ok end
 local function pop_font(pushed) if pushed and type(reaper.ImGui_PopFont)=="function" then reaper.ImGui_PopFont(ctx) end end
 local function trim(s) return (s or ""):gsub("^%s+",""):gsub("%s+$","") end
 local function shell_quote(s) return "'"..tostring(s):gsub("'","'\\''").."'" end
@@ -38,7 +29,6 @@ local function json_escape(s) return tostring(s or ""):gsub("\\","\\\\"):gsub('"
 local function read_file(p) local f=io.open(p,"rb"); if not f then return nil end local s=f:read("*a"); f:close(); return s end
 local function write_file(p,s) local f=io.open(p,"wb"); if not f then return false end f:write(s); f:close(); return true end
 
--- Convert a Unicode code point to UTF-8 without relying on optional Lua libraries.
 local function utf8_from_codepoint(cp)
   if cp<=0x7F then return string.char(cp) end
   if cp<=0x7FF then return string.char(0xC0+math.floor(cp/0x40),0x80+(cp%0x40)) end
@@ -47,12 +37,31 @@ local function utf8_from_codepoint(cp)
   return "�"
 end
 
+-- Some API text can contain a second escaped Unicode layer (for example \\u2013).
+-- Decode any such residual sequences after the normal JSON string pass.
+local function decode_residual_unicode(s)
+  if not s then return s end
+  local changed=true
+  local rounds=0
+  while changed and rounds<3 do
+    changed=false
+    s=s:gsub("\\u(%x%x%x%x)",function(hex)
+      local cp=tonumber(hex,16)
+      if not cp then return "\\u"..hex end
+      changed=true
+      return utf8_from_codepoint(cp)
+    end)
+    rounds=rounds+1
+  end
+  return s
+end
+
 local function read_json_string(raw,q)
   if not raw or raw:sub(q,q)~='"' then return nil end
   local out,i={},q+1
   while i<=#raw do
     local c=raw:sub(i,i)
-    if c=='"' then return table.concat(out) end
+    if c=='"' then return decode_residual_unicode(table.concat(out)) end
     if c=="\\" then
       i=i+1
       local e=raw:sub(i,i)
@@ -69,19 +78,13 @@ local function read_json_string(raw,q)
         local cp=(#hex==4 and tonumber(hex,16)) or nil
         if cp then
           i=i+4
-          -- JSON represents code points above U+FFFF as UTF-16 surrogate pairs.
           if cp>=0xD800 and cp<=0xDBFF and raw:sub(i+1,i+2)=="\\u" then
             local lowhex=raw:sub(i+3,i+6)
             local low=(#lowhex==4 and tonumber(lowhex,16)) or nil
-            if low and low>=0xDC00 and low<=0xDFFF then
-              cp=0x10000+(cp-0xD800)*0x400+(low-0xDC00)
-              i=i+6
-            end
+            if low and low>=0xDC00 and low<=0xDFFF then cp=0x10000+(cp-0xD800)*0x400+(low-0xDC00); i=i+6 end
           end
           out[#out+1]=utf8_from_codepoint(cp)
-        else
-          out[#out+1]="u"
-        end
+        else out[#out+1]="u" end
       else out[#out+1]=e end
     else out[#out+1]=c end
     i=i+1
