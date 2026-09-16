@@ -1,10 +1,10 @@
 -- @description Composition Studio Basic
--- @version 0.1-test6
+-- @version 0.1-test7
 -- @author Klangwerke
 -- @about First end-to-end test: selected REAPER MIDI -> OpenAI -> new MIDI in REAPER.
 
 local SCRIPT_NAME = "Composition Studio Basic"
-local VERSION = "0.1-test6"
+local VERSION = "0.1-test7"
 local EXT_SECTION, EXT_KEY = "CompositionStudio", "OpenAIAPIKey"
 
 local function trim(s) return (s or ""):gsub("^%s+",""):gsub("%s+$","") end
@@ -148,27 +148,77 @@ local function run_openai(prompt,key)
 end
 
 local function qn_to_time(qn) return reaper.TimeMap2_QNToTime(0,qn) end
+
 local function create_midi_item(track,name,notes)
-  local lo,hi=math.huge,-math.huge; for _,n in ipairs(notes) do lo=math.min(lo,n.start_qn); hi=math.max(hi,n.start_qn+n.duration_qn) end
+  local lo,hi=math.huge,-math.huge
+  for _,n in ipairs(notes) do lo=math.min(lo,n.start_qn); hi=math.max(hi,n.start_qn+n.duration_qn) end
   if lo==math.huge or hi<=lo then return nil,"Ungueltiger musikalischer Bereich." end
-  local item=reaper.CreateNewMIDIItemInProj(track,qn_to_time(lo),qn_to_time(hi),false); if not item then return nil,"MIDI-Item konnte nicht erzeugt werden." end
-  local take=reaper.GetActiveTake(item); if not take then return nil,"MIDI-Take konnte nicht erzeugt werden." end; reaper.GetSetMediaItemTakeInfo_String(take,"P_NAME",name,true)
-  for _,n in ipairs(notes) do local s=reaper.MIDI_GetPPQPosFromProjTime(take,qn_to_time(n.start_qn)); local e=reaper.MIDI_GetPPQPosFromProjTime(take,qn_to_time(n.start_qn+n.duration_qn)); reaper.MIDI_InsertNote(take,false,false,s,e,n.channel,n.pitch,n.velocity,true) end
-  reaper.MIDI_Sort(take); return item
+  local item=reaper.CreateNewMIDIItemInProj(track,qn_to_time(lo),qn_to_time(hi),false)
+  if not item then return nil,"MIDI-Item konnte nicht erzeugt werden." end
+  local take=reaper.GetActiveTake(item)
+  if not take then return nil,"MIDI-Take konnte nicht erzeugt werden." end
+  reaper.GetSetMediaItemTakeInfo_String(take,"P_NAME",name,true)
+  for _,n in ipairs(notes) do
+    local s=reaper.MIDI_GetPPQPosFromProjTime(take,qn_to_time(n.start_qn))
+    local e=reaper.MIDI_GetPPQPosFromProjTime(take,qn_to_time(n.start_qn+n.duration_qn))
+    reaper.MIDI_InsertNote(take,false,false,s,e,n.channel,n.pitch,n.velocity,true)
+  end
+  reaper.MIDI_Sort(take)
+  return item
 end
-local function create_track(name) local i=reaper.CountTracks(0); reaper.InsertTrackAtIndex(i,true); local t=reaper.GetTrack(0,i); if t then reaper.GetSetMediaTrackInfo_String(t,"P_NAME",name,true) end; return t end
+
+local function create_track(name)
+  local i=reaper.CountTracks(0)
+  reaper.InsertTrackAtIndex(i,true)
+  local t=reaper.GetTrack(0,i)
+  if t then reaper.GetSetMediaTrackInfo_String(t,"P_NAME",name,true) end
+  return t
+end
+
+-- Eine Revision bekommt bewusst eine eigene Spur direkt unter ihrer Quellspur.
+-- So bleiben Original und Variante erhalten, ohne zeitlich auf derselben Spur übereinanderzuliegen.
+local function create_track_below(source_track,name)
+  if not source_track then return nil end
+  local track_number=reaper.GetMediaTrackInfo_Value(source_track,"IP_TRACKNUMBER")
+  if not track_number or track_number<1 then return nil end
+  local insert_index=math.floor(track_number)
+  reaper.InsertTrackAtIndex(insert_index,true)
+  local t=reaper.GetTrack(0,insert_index)
+  if t then reaper.GetSetMediaTrackInfo_String(t,"P_NAME",name,true) end
+  return t
+end
 
 local function apply_results(results,items)
-  local sources={}; for _,it in ipairs(items) do sources[it.guid]=it end; local created={}; reaper.Undo_BeginBlock2(0); reaper.PreventUIRefresh(1)
+  local sources={}; for _,it in ipairs(items) do sources[it.guid]=it end
+  local created={}
+  reaper.Undo_BeginBlock2(0); reaper.PreventUIRefresh(1)
   local ok,err=xpcall(function()
     for _,r in ipairs(results) do
-      if r.kind=="revised" then local src=sources[r.source]; local item,why=create_midi_item(src.track,r.name.." [Variante]",r.notes); if not item then error(why) end; created[#created+1]=item
-      elseif r.kind=="new" then local tr=create_track(r.name); if not tr then error("Neue Spur konnte nicht erzeugt werden.") end; local item,why=create_midi_item(tr,r.name,r.notes); if not item then error(why) end; created[#created+1]=item end
+      if r.kind=="revised" then
+        local src=sources[r.source]
+        local variant_name=r.name.." [Variante]"
+        local tr=create_track_below(src.track,variant_name)
+        if not tr then error("Variantenspur konnte nicht erzeugt werden.") end
+        local item,why=create_midi_item(tr,variant_name,r.notes)
+        if not item then error(why) end
+        created[#created+1]=item
+      elseif r.kind=="new" then
+        local tr=create_track(r.name)
+        if not tr then error("Neue Spur konnte nicht erzeugt werden.") end
+        local item,why=create_midi_item(tr,r.name,r.notes)
+        if not item then error(why) end
+        created[#created+1]=item
+      end
     end
   end,debug.traceback)
-  reaper.PreventUIRefresh(-1); if not ok then reaper.Undo_EndBlock2(0,"Composition Studio – fehlgeschlagen",-1); reaper.Undo_DoUndo2(0); return nil,err end
-  if #created>0 then for i=0,reaper.CountMediaItems(0)-1 do reaper.SetMediaItemSelected(reaper.GetMediaItem(0,i),false) end; for _,it in ipairs(created) do reaper.SetMediaItemSelected(it,true) end end
-  reaper.UpdateArrange(); reaper.Undo_EndBlock2(0,"Composition Studio – KI-Komposition",-1); return created
+  reaper.PreventUIRefresh(-1)
+  if not ok then reaper.Undo_EndBlock2(0,"Composition Studio – fehlgeschlagen",-1); reaper.Undo_DoUndo2(0); return nil,err end
+  if #created>0 then
+    for i=0,reaper.CountMediaItems(0)-1 do reaper.SetMediaItemSelected(reaper.GetMediaItem(0,i),false) end
+    for _,it in ipairs(created) do reaper.SetMediaItemSelected(it,true) end
+  end
+  reaper.UpdateArrange(); reaper.Undo_EndBlock2(0,"Composition Studio – KI-Komposition",-1)
+  return created
 end
 
 local function process_request(items,request)
@@ -179,82 +229,57 @@ local function process_request(items,request)
   if #created==0 then reaper.ShowMessageBox("Die KI hat keine neue oder überarbeitete Stimme erzeugt.\nDie ursprüngliche Auswahl bleibt erhalten.",SCRIPT_NAME.." "..VERSION,0) else reaper.ShowMessageBox(string.format("%d neues/überarbeitetes MIDI-Item(s) erzeugt.\n\nOriginale blieben erhalten. Neue Items sind ausgewählt.\nDer Vorgang ist ein REAPER-Undo-Schritt.",#created),SCRIPT_NAME.." "..VERSION,0) end
 end
 
--- Normales natives Eingabefeld als sichere Rückfallebene: Cursor, Auswahl und Zwischenablage funktionieren.
 local function ask_request_native(n, on_submit)
-  local ok, text = reaper.GetUserInputs(
-    SCRIPT_NAME.." "..VERSION,
-    1,
-    string.format("%d MIDI-Item(s) erkannt. Freier Kompositionsauftrag:,extrawidth=520", n),
-    ""
-  )
+  local ok, text = reaper.GetUserInputs(SCRIPT_NAME.." "..VERSION,1,string.format("%d MIDI-Item(s) erkannt. Freier Kompositionsauftrag:,extrawidth=520", n),"")
   if not ok then return end
   text=trim(text)
   if text~="" then on_submit(text) end
 end
 
--- ReaImGui liefert ein echtes mehrzeiliges Textfeld mit Cursor, Auswahl und Cmd-C/Cmd-V.
 local function ask_request_imgui(n, on_submit)
   local ctx = reaper.ImGui_CreateContext(SCRIPT_NAME)
   local text = ""
   local open = true
   local first_frame = true
   local font = nil
-
   if reaper.ImGui_CreateFont and reaper.ImGui_Attach then
     font = reaper.ImGui_CreateFont("sans-serif", 20)
     reaper.ImGui_Attach(ctx, font)
   end
-
   local function finish(request)
     open=false
     if request and trim(request)~="" then on_submit(trim(request)) end
   end
-
   local function loop()
     if not open then return end
-
-    if first_frame then
-      reaper.ImGui_SetNextWindowSize(ctx, 760, 300, reaper.ImGui_Cond_FirstUseEver())
-      first_frame=false
-    end
-
+    if first_frame then reaper.ImGui_SetNextWindowSize(ctx,760,300,reaper.ImGui_Cond_FirstUseEver()); first_frame=false end
     local visible
-    visible, open = reaper.ImGui_Begin(ctx, SCRIPT_NAME.." "..VERSION, open)
+    visible,open=reaper.ImGui_Begin(ctx,SCRIPT_NAME.." "..VERSION,open)
     if visible then
-      if font and reaper.ImGui_PushFont then reaper.ImGui_PushFont(ctx, font) end
-
-      reaper.ImGui_Text(ctx, string.format("%d MIDI-Item(s) erkannt", n))
+      if font and reaper.ImGui_PushFont then reaper.ImGui_PushFont(ctx,font) end
+      reaper.ImGui_Text(ctx,string.format("%d MIDI-Item(s) erkannt",n))
       reaper.ImGui_Spacing(ctx)
-      reaper.ImGui_Text(ctx, "Freier Kompositionsauftrag:")
+      reaper.ImGui_Text(ctx,"Freier Kompositionsauftrag:")
       local changed
-      changed, text = reaper.ImGui_InputTextMultiline(ctx, "##composition_request", text, -1, 150)
-
+      changed,text=reaper.ImGui_InputTextMultiline(ctx,"##composition_request",text,-1,150)
       reaper.ImGui_Spacing(ctx)
-      if reaper.ImGui_Button(ctx, "Komponieren", 150, 40) and trim(text)~="" then
+      if reaper.ImGui_Button(ctx,"Komponieren",150,40) and trim(text)~="" then
         if font and reaper.ImGui_PopFont then reaper.ImGui_PopFont(ctx) end
-        reaper.ImGui_End(ctx)
-        finish(text)
-        return
+        reaper.ImGui_End(ctx); finish(text); return
       end
       reaper.ImGui_SameLine(ctx)
-      if reaper.ImGui_Button(ctx, "Abbrechen", 120, 40) then
+      if reaper.ImGui_Button(ctx,"Abbrechen",120,40) then
         if font and reaper.ImGui_PopFont then reaper.ImGui_PopFont(ctx) end
-        reaper.ImGui_End(ctx)
-        open=false
-        return
+        reaper.ImGui_End(ctx); open=false; return
       end
-
       if font and reaper.ImGui_PopFont then reaper.ImGui_PopFont(ctx) end
       reaper.ImGui_End(ctx)
     end
-
     if open then reaper.defer(loop) end
   end
-
   loop()
 end
 
--- Sofortiger Vorabtest: ohne Auswahl wird kein Eingabefenster geöffnet.
 if reaper.CountSelectedMediaItems(0)==0 then
   reaper.ShowMessageBox("Keine ausgewählten MIDI-Items.\n\nWähle ein oder mehrere MIDI-Items aus.",SCRIPT_NAME.." "..VERSION,0)
   return
@@ -266,12 +291,5 @@ if #items==0 then
   return
 end
 
-local function submit(request)
-  process_request(items,request)
-end
-
-if reaper.ImGui_CreateContext and reaper.ImGui_InputTextMultiline then
-  ask_request_imgui(#items, submit)
-else
-  ask_request_native(#items, submit)
-end
+local function submit(request) process_request(items,request) end
+if reaper.ImGui_CreateContext and reaper.ImGui_InputTextMultiline then ask_request_imgui(#items,submit) else ask_request_native(#items,submit) end
