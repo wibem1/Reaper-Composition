@@ -4,6 +4,7 @@
 -- @about Recursive AI composition directly inside REAPER. Composition Lab is not a runtime dependency.
 
 local SCRIPT_NAME, VERSION = "Composition Studio Basic", "0.1-dev"
+local EXT_SECTION, EXT_KEY = "CompositionStudio", "OpenAIAPIKey"
 
 local function round(n,p) local m=10^(p or 3); return math.floor(n*m+0.5)/m end
 local function trim(s) return (s or ""):gsub("^%s+",""):gsub("%s+$","") end
@@ -16,6 +17,23 @@ local function guid(obj,take)
   local ok,g
   if take then ok,g=reaper.GetSetMediaItemTakeInfo_String(obj,"GUID","",false) else ok,g=reaper.GetSetMediaItemInfo_String(obj,"GUID","",false) end
   return ok and g or ""
+end
+
+-- Basic key storage: local REAPER ExtState only, never GitHub/project files.
+-- This is convenience storage, not macOS Keychain encryption. Comfort version can upgrade it later.
+local function get_api_key()
+  local key=trim(reaper.GetExtState(EXT_SECTION,EXT_KEY))
+  if key~="" then return key end
+  local ok,input=reaper.GetUserInputs(SCRIPT_NAME.." – Ersteinrichtung",1,"OpenAI API-Key:,extrawidth=320","")
+  if not ok then return nil,"API-Key-Eingabe abgebrochen" end
+  key=trim(input)
+  if key=="" then return nil,"Kein API-Key eingegeben" end
+  if not key:match("^sk%-") then
+    local answer=reaper.ShowMessageBox("Der eingegebene Schlüssel sieht nicht wie ein OpenAI API-Key aus. Trotzdem lokal speichern?",SCRIPT_NAME,4)
+    if answer~=6 then return nil,"API-Key nicht gespeichert" end
+  end
+  reaper.SetExtState(EXT_SECTION,EXT_KEY,key,true)
+  return key
 end
 
 local function selected_midi_items()
@@ -55,7 +73,6 @@ local function ask_request(n)
   s=trim(s); if not ok or s=="" then return nil end; return s
 end
 
--- Musical freedom, small technical envelope only.
 local function build_prompt(request,music)
   return [[Du komponierst Musik. Nutze das übergebene Material als gemeinsamen musikalischen Kontext und erfülle den freien Auftrag musikalisch eigenständig. Füge keine unnötigen Regeln hinzu.
 Antworte ausschließlich mit technischen Ergebniszeilen:
@@ -99,8 +116,7 @@ local function validate_response(text,items)
   if #out==0 then return nil,"Leere KI-Antwort" end; return out
 end
 
-local function run_openai(prompt)
-  local key=os.getenv("OPENAI_API_KEY"); if not key or key=="" then return nil,"OPENAI_API_KEY ist nicht gesetzt" end
+local function run_openai(prompt,key)
   local tmp=os.tmpname(); local req=tmp..".json"; local resp=tmp..".out"; local codef=tmp..".code"
   local body='{"model":"gpt-5.6","input":"'..json_escape(prompt)..'"}'
   if not write_file(req,body) then return nil,"Temporäre Anfrage konnte nicht geschrieben werden" end
@@ -112,31 +128,24 @@ local function run_openai(prompt)
 end
 
 local function qn_to_time(qn) return reaper.TimeMap2_QNToTime(0,qn) end
-local function note_bounds(notes)
-  local lo,hi=math.huge,-math.huge
-  for _,n in ipairs(notes) do lo=math.min(lo,n.start_qn); hi=math.max(hi,n.start_qn+n.duration_qn) end
-  return lo,hi
-end
-local function set_take_name(take,name) reaper.GetSetMediaItemTakeInfo_String(take,"P_NAME",name,true) end
+local function note_bounds(notes) local lo,hi=math.huge,-math.huge; for _,n in ipairs(notes) do lo=math.min(lo,n.start_qn); hi=math.max(hi,n.start_qn+n.duration_qn) end; return lo,hi end
 local function create_midi_item(track,name,notes)
   local lo,hi=note_bounds(notes); if lo==math.huge or hi<=lo then return nil,"Ungültiger musikalischer Bereich" end
-  local start_time,end_time=qn_to_time(lo),qn_to_time(hi)
-  local item=reaper.CreateNewMIDIItemInProj(track,start_time,end_time,false); if not item then return nil,"MIDI-Item konnte nicht erzeugt werden" end
+  local item=reaper.CreateNewMIDIItemInProj(track,qn_to_time(lo),qn_to_time(hi),false); if not item then return nil,"MIDI-Item konnte nicht erzeugt werden" end
   local take=reaper.GetActiveTake(item); if not take then reaper.DeleteTrackMediaItem(track,item); return nil,"MIDI-Take konnte nicht erzeugt werden" end
-  set_take_name(take,name)
+  reaper.GetSetMediaItemTakeInfo_String(take,"P_NAME",name,true)
   for _,n in ipairs(notes) do
-    local st=qn_to_time(n.start_qn); local et=qn_to_time(n.start_qn+n.duration_qn)
-    local sppq=reaper.MIDI_GetPPQPosFromProjTime(take,st); local eppq=reaper.MIDI_GetPPQPosFromProjTime(take,et)
+    local sppq=reaper.MIDI_GetPPQPosFromProjTime(take,qn_to_time(n.start_qn)); local eppq=reaper.MIDI_GetPPQPosFromProjTime(take,qn_to_time(n.start_qn+n.duration_qn))
     if not reaper.MIDI_InsertNote(take,false,false,sppq,eppq,n.channel,n.pitch,n.velocity,true) then reaper.DeleteTrackMediaItem(track,item); return nil,"Note konnte nicht erzeugt werden" end
   end
-  reaper.MIDI_Sort(take); return item,take
+  reaper.MIDI_Sort(take); return item
 end
 local function create_named_track(name)
   local idx=reaper.CountTracks(0); reaper.InsertTrackAtIndex(idx,true); local tr=reaper.GetTrack(0,idx); if not tr then return nil end
   reaper.GetSetMediaTrackInfo_String(tr,"P_NAME",name,true); return tr
 end
 local function apply_results(results,items)
-  local sources=source_map(items); local created={}; local ok,err=true,nil
+  local sources=source_map(items); local created={}
   reaper.Undo_BeginBlock2(0); reaper.PreventUIRefresh(1)
   local success,why=xpcall(function()
     for _,r in ipairs(results) do
@@ -150,20 +159,17 @@ local function apply_results(results,items)
     end
   end,debug.traceback)
   reaper.PreventUIRefresh(-1)
-  if not success then
-    reaper.Undo_EndBlock2(0,"Composition Studio – fehlgeschlagene Anwendung",-1); reaper.Undo_DoUndo2(0); return nil,why
-  end
-  -- Make the fresh material the next recursive selection.
+  if not success then reaper.Undo_EndBlock2(0,"Composition Studio – fehlgeschlagene Anwendung",-1); reaper.Undo_DoUndo2(0); return nil,why end
   for i=0,reaper.CountMediaItems(0)-1 do reaper.SetMediaItemSelected(reaper.GetMediaItem(0,i),false) end
   for _,item in ipairs(created) do reaper.SetMediaItemSelected(item,true) end
-  reaper.UpdateArrange(); reaper.Undo_EndBlock2(0,"Composition Studio – KI-Komposition",-1)
-  return created
+  reaper.UpdateArrange(); reaper.Undo_EndBlock2(0,"Composition Studio – KI-Komposition",-1); return created
 end
 
 local items=selected_midi_items()
 if #items==0 then reaper.ShowMessageBox("Keine ausgewählten MIDI-Items.\n\nWähle ein oder mehrere MIDI-Items in REAPER aus.",SCRIPT_NAME.." "..VERSION,0); return end
 local request=ask_request(#items); if not request then return end
-local answer,err=run_openai(build_prompt(request,context_text(items)))
+local key,kerr=get_api_key(); if not key then reaper.ShowMessageBox(kerr,SCRIPT_NAME,0); return end
+local answer,err=run_openai(build_prompt(request,context_text(items)),key)
 if not answer then reaper.ShowMessageBox("KI-Aufruf nicht ausgeführt:\n\n"..err.."\n\nDas REAPER-Projekt wurde nicht verändert.",SCRIPT_NAME.." "..VERSION,0); return end
 local result,verr=validate_response(answer,items)
 if not result then reaper.ShowMessageBox("KI-Antwort verworfen:\n\n"..verr.."\n\nDas REAPER-Projekt wurde nicht verändert.",SCRIPT_NAME.." "..VERSION,0); return end
