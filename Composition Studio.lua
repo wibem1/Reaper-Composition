@@ -1,10 +1,10 @@
 -- @description Composition Studio Basic
--- @version 0.1-test5
+-- @version 0.1-test6
 -- @author Klangwerke
 -- @about First end-to-end test: selected REAPER MIDI -> OpenAI -> new MIDI in REAPER.
 
 local SCRIPT_NAME = "Composition Studio Basic"
-local VERSION = "0.1-test5"
+local VERSION = "0.1-test6"
 local EXT_SECTION, EXT_KEY = "CompositionStudio", "OpenAIAPIKey"
 
 local function trim(s) return (s or ""):gsub("^%s+",""):gsub("%s+$","") end
@@ -179,62 +179,82 @@ local function process_request(items,request)
   if #created==0 then reaper.ShowMessageBox("Die KI hat keine neue oder überarbeitete Stimme erzeugt.\nDie ursprüngliche Auswahl bleibt erhalten.",SCRIPT_NAME.." "..VERSION,0) else reaper.ShowMessageBox(string.format("%d neues/überarbeitetes MIDI-Item(s) erzeugt.\n\nOriginale blieben erhalten. Neue Items sind ausgewählt.\nDer Vorgang ist ein REAPER-Undo-Schritt.",#created),SCRIPT_NAME.." "..VERSION,0) end
 end
 
--- Nicht blockierendes gfx-Fenster: jeder Durchlauf gibt REAPER sofort wieder Kontrolle.
-local function ask_request_async(n,on_submit)
-  local W,H=760,230
-  local text=""
-  local mouse_was_down=false
-  gfx.init(SCRIPT_NAME.." "..VERSION,W,H,0)
+-- Normales natives Eingabefeld als sichere Rückfallebene: Cursor, Auswahl und Zwischenablage funktionieren.
+local function ask_request_native(n, on_submit)
+  local ok, text = reaper.GetUserInputs(
+    SCRIPT_NAME.." "..VERSION,
+    1,
+    string.format("%d MIDI-Item(s) erkannt. Freier Kompositionsauftrag:,extrawidth=520", n),
+    ""
+  )
+  if not ok then return end
+  text=trim(text)
+  if text~="" then on_submit(text) end
+end
 
-  local function inside(x,y,w,h)
-    return gfx.mouse_x>=x and gfx.mouse_x<=x+w and gfx.mouse_y>=y and gfx.mouse_y<=y+h
+-- ReaImGui liefert ein echtes mehrzeiliges Textfeld mit Cursor, Auswahl und Cmd-C/Cmd-V.
+local function ask_request_imgui(n, on_submit)
+  local ctx = reaper.ImGui_CreateContext(SCRIPT_NAME)
+  local text = ""
+  local open = true
+  local first_frame = true
+  local font = nil
+
+  if reaper.ImGui_CreateFont and reaper.ImGui_Attach then
+    font = reaper.ImGui_CreateFont("sans-serif", 20)
+    reaper.ImGui_Attach(ctx, font)
   end
 
-  local function button(x,y,w,h,label)
-    gfx.set(0.88,0.88,0.88,1); gfx.rect(x,y,w,h,1)
-    gfx.set(0.25,0.25,0.25,1); gfx.rect(x,y,w,h,0)
-    local tw,th=gfx.measurestr(label); gfx.x=x+(w-tw)/2; gfx.y=y+(h-th)/2; gfx.drawstr(label)
-  end
-
-  local function close_and_submit()
-    local request=trim(text)
-    gfx.quit()
-    if request~="" then on_submit(request) end
+  local function finish(request)
+    open=false
+    if request and trim(request)~="" then on_submit(trim(request)) end
   end
 
   local function loop()
-    gfx.set(0.96,0.96,0.96,1); gfx.rect(0,0,W,H,1)
-    gfx.setfont(1,"Arial",20); gfx.set(0.12,0.12,0.12,1)
-    gfx.x=28; gfx.y=24; gfx.drawstr(string.format("%d MIDI-Item(s) erkannt",n))
-    gfx.setfont(1,"Arial",18); gfx.x=28; gfx.y=58; gfx.drawstr("Freier Kompositionsauftrag:")
-    gfx.set(1,1,1,1); gfx.rect(28,92,W-56,48,1)
-    gfx.set(0.30,0.30,0.30,1); gfx.rect(28,92,W-56,48,0)
-    gfx.set(0.08,0.08,0.08,1); gfx.x=40; gfx.y=104
-    local shown=text
-    while gfx.measurestr(shown)>W-86 and #shown>1 do shown=shown:sub(2) end
-    gfx.drawstr(shown)
-    button(W-250,166,100,40,"Abbrechen"); button(W-132,166,104,40,"OK")
-    gfx.update()
+    if not open then return end
 
-    local ch=gfx.getchar()
-    if ch<0 or ch==27 then gfx.quit(); return end
-    if ch==13 and trim(text)~="" then close_and_submit(); return
-    elseif ch==8 then text=text:sub(1,-2)
-    elseif ch>=32 and ch<=0x10FFFF then local ok,c=pcall(utf8.char,ch); if ok then text=text..c end end
-
-    local down=(gfx.mouse_cap & 1)==1
-    if down and not mouse_was_down then
-      if inside(W-250,166,100,40) then gfx.quit(); return
-      elseif inside(W-132,166,104,40) and trim(text)~="" then close_and_submit(); return end
+    if first_frame then
+      reaper.ImGui_SetNextWindowSize(ctx, 760, 300, reaper.ImGui_Cond_FirstUseEver())
+      first_frame=false
     end
-    mouse_was_down=down
-    reaper.defer(loop)
+
+    local visible
+    visible, open = reaper.ImGui_Begin(ctx, SCRIPT_NAME.." "..VERSION, open)
+    if visible then
+      if font and reaper.ImGui_PushFont then reaper.ImGui_PushFont(ctx, font) end
+
+      reaper.ImGui_Text(ctx, string.format("%d MIDI-Item(s) erkannt", n))
+      reaper.ImGui_Spacing(ctx)
+      reaper.ImGui_Text(ctx, "Freier Kompositionsauftrag:")
+      local changed
+      changed, text = reaper.ImGui_InputTextMultiline(ctx, "##composition_request", text, -1, 150)
+
+      reaper.ImGui_Spacing(ctx)
+      if reaper.ImGui_Button(ctx, "Komponieren", 150, 40) and trim(text)~="" then
+        if font and reaper.ImGui_PopFont then reaper.ImGui_PopFont(ctx) end
+        reaper.ImGui_End(ctx)
+        finish(text)
+        return
+      end
+      reaper.ImGui_SameLine(ctx)
+      if reaper.ImGui_Button(ctx, "Abbrechen", 120, 40) then
+        if font and reaper.ImGui_PopFont then reaper.ImGui_PopFont(ctx) end
+        reaper.ImGui_End(ctx)
+        open=false
+        return
+      end
+
+      if font and reaper.ImGui_PopFont then reaper.ImGui_PopFont(ctx) end
+      reaper.ImGui_End(ctx)
+    end
+
+    if open then reaper.defer(loop) end
   end
 
   loop()
 end
 
--- Sofortiger Vorabtest: ohne Auswahl wird weder MIDI gelesen noch ein gfx-Fenster geöffnet.
+-- Sofortiger Vorabtest: ohne Auswahl wird kein Eingabefenster geöffnet.
 if reaper.CountSelectedMediaItems(0)==0 then
   reaper.ShowMessageBox("Keine ausgewählten MIDI-Items.\n\nWähle ein oder mehrere MIDI-Items aus.",SCRIPT_NAME.." "..VERSION,0)
   return
@@ -246,6 +266,12 @@ if #items==0 then
   return
 end
 
-ask_request_async(#items,function(request)
+local function submit(request)
   process_request(items,request)
-end)
+end
+
+if reaper.ImGui_CreateContext and reaper.ImGui_InputTextMultiline then
+  ask_request_imgui(#items, submit)
+else
+  ask_request_native(#items, submit)
+end
