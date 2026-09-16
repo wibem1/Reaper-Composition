@@ -1,57 +1,56 @@
-# Reaper Composition
+# Composition Studio for REAPER
 
-Reaper Composition ist die Architektur- und ReaScript-Seite der rekursiven DAW-Komposition mit Composition Lab. REAPER bleibt DAW, Projektzustand und musikalischer Arbeitsraum; Composition Lab/MusicChat liefert die semantische KI-Kompositionsschicht.
+Composition Studio ist eine speziell für REAPER entwickelte KI-Kompositionsumgebung auf ReaScript/Lua-Basis.
 
-## Ziel
+## Grundidee
 
-Nicht nur komplette MIDI-Kompositionen erzeugen, sondern vorhandene Musik schrittweise weiterentwickeln:
+REAPER ist die vollständige DAW. Composition Studio ergänzt ausschließlich die fehlende KI-Kompositionsschicht. Es baut weder Transport, Arrangement, MIDI-Editor, Mixer, Plugin-Hosting noch Projektverwaltung nach.
 
-- einzelne Stimmen, MIDI-Items oder Taktbereiche bearbeiten
+Ziel ist rekursives Komponieren direkt im REAPER-Projekt:
+
+- ausgewählte MIDI-Items unmittelbar als musikalischen Kontext verwenden
+- einzelne Stimmen oder Passagen weiterentwickeln
 - neue Stimmen zu vorhandenem Material komponieren
-- Varianten erzeugen und vergleichen
-- mehrere Stimmen zusammenführen oder weiterentwickeln
-- bereits gelungenes Material durch den Auftrag unverändert lassen
-- Ergebnisse sicher und nachvollziehbar nach REAPER zurückgeben
+- Varianten nicht destruktiv erzeugen und vergleichen
+- Ergebnisse direkt im REAPER-Projekt weiterverwenden
+- den nächsten Kompositionsschritt unmittelbar auf dem bisherigen Ergebnis aufbauen
 
 Grundprinzip:
 
-`REAPER-Auswahl -> Bridge -> Composition Lab / MusicChat -> Ergebnis + Rückgabeabsicht -> REAPER`
+`REAPER-Auswahl -> Composition Studio -> KI -> Ergebnis direkt in REAPER`
 
-## Architekturprinzipien
+Es gibt keine Transport-Bridge zu Composition Lab und kein Hin- und Herschicken zwischen zwei Programmen.
 
-1. **Keine eigene DAW.** Arrangement, Transport, MIDI, Instrumente, Plugins, Mixer und Projektverwaltung bleiben Aufgaben von REAPER.
-2. **Bestehenden Roundtrip nutzen.** Die funktionierende V0.6-ReaScript-Bridge ist Ausgangsbasis, kein Neubau.
-3. **Auswahl ist gemeinsamer musikalischer Kontext.** REAPER überträgt genau die ausgewählten MIDI-Items. Es gibt keine technischen TARGET-/CONTEXT-Markierungen.
-4. **Der freie Auftrag bestimmt die Rollen.** MusicChat entscheidet anhand des Auftrags, was unverändert bleibt, bearbeitet oder neu ergänzt wird.
-5. **Originale schützen.** Rückgaben sind standardmäßig nicht destruktiv.
-6. **Rekursive Arbeit.** Ein Ergebnis kann unmittelbar Ausgangspunkt des nächsten Kompositionsschritts werden.
+## Abgrenzung zu Composition Lab
 
-## Bereits vorhanden
+Composition Lab V3.2.9 bleibt eine eigenständige Anwendung. Die vorhandenen funktionierenden REAPER-Skripte für Composition Lab werden nicht verändert und bleiben als separate Lösung erhalten.
 
-Die Bridge `CompositionLab-Reaper-Bridge-0.6` unterstützt bereits ausgewählte MIDI-Items, Mehrspurigkeit, relative Zeitpositionen, Tracknamen, Noten sowie relevante Nicht-Noten-Ereignisse wie CC, Program Change, Pitch Bend, Pressure und weitere rohe MIDI-Ereignisse.
+Composition Studio darf Ideen und geeignete Logik aus Composition Lab übernehmen, hat aber zur Laufzeit keine Abhängigkeit von der App.
 
-Die produktiven REAPER-Aktionen bleiben lokal unter `Scripts/Composition Lab` mit ihren bestehenden Dateinamen und Shortcuts. Eine Sicherung der wiedergefundenen Skripte liegt im Repository unter `scripts/legacy/`.
+## Entwicklung in zwei Schritten
 
-## Nächster Schritt: Composition Lab V4.0
+### Schritt 1 – Composition Studio Basic
 
-Composition Lab erhält die neue Seite **DAW-Kommunikation**. Vorgesehene Tab-Reihenfolge:
+Bewusst einfaches Interface, vollständiger technischer Kern:
 
-`Main – Noten – DAW-Kommunikation – Technik`
+1. ausgewählte MIDI-Items direkt erkennen und lesen
+2. musikalische MIDI-Daten kompakt für die KI darstellen
+3. freien Kompositionsauftrag entgegennehmen
+4. KI direkt ansprechen
+5. Ergebnis sicher und nicht destruktiv in REAPER erzeugen
+6. Mehrspurigkeit, neue Stimmen und REAPER-Undo unterstützen
+7. rekursiven nächsten Arbeitsschritt ermöglichen
 
-Die Seite zeigt das empfangene DAW-Material, verwendet den bestehenden MusicChat für den freien Kompositionsauftrag und macht die geplante Rückgabe sichtbar: **unverändert**, **bearbeitet** oder **neu**.
+Basic ist kein Wegwerfprototyp. Sein Kern bleibt Grundlage der Komfortversion.
 
-## Projektstruktur
+### Schritt 2 – Composition Studio Komfortversion
 
-- `scripts/` – ReaScript/Lua und gesicherte Bridge-Skripte
-- `bridge/` – Austauschformat und leichte Kommunikation
-- `docs/` – Architektur, Entscheidungen und Tests
-- `tests/` – automatisierbare Prüfungen
-- `DEVELOPMENT.md` – verbindliche Entwicklungsregeln
+Nach erfolgreichem Basic-Kern folgen ein ansprechendes dockbares GUI, MusicChat, Provider-/Modellauswahl, Variantenverwaltung, komfortables Übernehmen/Verwerfen und weitere Funktionen aus der praktischen Arbeit.
 
-## Entwicklungsregel
+## Musikalisches Prinzip
 
-Vor jeder Änderung muss `DEVELOPMENT.md` gelesen und berücksichtigt werden. Keine ungeprüften Zwischenstände, keine Klecker-Versionen und keine Kette nachträglicher Notfall-Patches.
+Die REAPER-Auswahl bestimmt, welche Musik die KI kennt. Der freie natürliche Kompositionsauftrag bestimmt, was damit geschehen soll. Keine technischen TARGET-/CONTEXT-Markierungen und keine unnötig starren musikalischen Regeln.
 
-## Status
+## Aktueller Stand
 
-**Stabiler Basis-Roundtrip vorhanden. Aktive Entwicklungsstufe: Composition Lab V4.0 – DAW-Kommunikation und explizite Rückgabesemantik.**
+Branch `composition-studio`: Beginn von Composition Studio Basic V0.1. Die erste technische Stufe erkennt ausgewählte MIDI-Items direkt in REAPER. KI-Anbindung und Rückschreiben folgen erst, nachdem dieser Kern praktisch bestätigt wurde.
