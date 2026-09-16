@@ -33,7 +33,7 @@ REAPER ist Projektzustand, Arrangement und musikalischer Arbeitsraum. Compositio
 
 Die Auswahl bestimmt, welche Musik die KI kennt. Der freie Auftrag bestimmt, was unverändert bleibt, bearbeitet oder neu ergänzt wird. Keine TARGET-/CONTEXT-Markierungen.
 
-Originalmaterial wird standardmäßig geschützt. KI-Ergebnisse werden zunächst nicht destruktiv erzeugt und müssen mit REAPER Undo rückgängig zu machen sein.
+Originalmaterial wird standardmäßig geschützt. KI-Ergebnisse werden nicht destruktiv erzeugt und müssen mit REAPER Undo rückgängig zu machen sein.
 
 ## Zweistufige Entwicklung
 
@@ -57,15 +57,43 @@ Basic ist kein Wegwerfprototyp.
 
 Erst nach bewiesenem Basic-Kern: ansprechendes dockbares GUI, MusicChat, Provider-/Modellauswahl, Variantenverwaltung, A/B-Arbeit und weitere Komfortfunktionen.
 
-## V0.1 – erster praktischer Test
+## Basic-Kern – Stand 2026-09-16
 
-Die erste Stufe enthält bewusst noch keine KI. `Composition Studio.lua` ermittelt direkt alle ausgewählten MIDI-Items und zeigt Trackname, Start, Länge und Notenzahl an.
+Der vollständige Codepfad ist jetzt implementiert:
 
-Ziel des ersten manuellen Tests: beweisen, dass das neue eigenständige Script in REAPER läuft und die Auswahl zuverlässig erkennt. Erst danach wird derselbe Kern um musikalische Datenerfassung und KI erweitert.
+`REAPER-Auswahl -> MIDI lesen -> freier Auftrag -> OpenAI -> Antwort validieren -> nicht destruktiv anwenden -> neue Ergebnisse auswählen`
+
+Technische Sicherheitsregeln:
+
+- API-Schlüssel wird nicht im Repository gespeichert; Basic erwartet `OPENAI_API_KEY` in der lokalen Umgebung.
+- KI-Antworten werden vor jeder Projektänderung validiert.
+- `revised` darf nur auf eine tatsächlich ausgewählte Quell-GUID zeigen.
+- `new` erzeugt eine neue REAPER-Spur.
+- `revised` erzeugt ein zusätzliches MIDI-Item auf der vorhandenen Spur; das Original bleibt bestehen.
+- Notenwerte werden auf gültige MIDI-/Zeitbereiche geprüft.
+- Der komplette Apply-Schritt ist ein REAPER-Undo-Schritt.
+- Bei einem Fehler während des Apply-Schritts wird dieser Undo-Schritt unmittelbar zurückgenommen.
+- Nach erfolgreichem Apply werden die neu erzeugten Items ausgewählt, damit der nächste rekursive Kompositionsschritt direkt möglich ist.
+
+Noch nicht als praktisch bewiesen gilt dieser Stand: REAPER-spezifisches Verhalten und der reale API-Aufruf müssen auf dem Ziel-Mac getestet werden. Insbesondere darf ein funktionierender Codepfad nicht mit einem bestandenen Praxistest verwechselt werden.
+
+## Nächster Testpunkt
+
+Jetzt ist erstmals ein manueller REAPER-Test sinnvoll. Zu prüfen sind:
+
+1. Script wird als neue eigenständige Action geladen.
+2. Ein oder mehrere ausgewählte MIDI-Items werden erkannt.
+3. Der freie Auftrag wird angenommen.
+4. API-Aufruf funktioniert mit lokal verfügbarem `OPENAI_API_KEY`.
+5. Eine gültige Antwort erzeugt zusätzliche MIDI-Items/Spuren, ohne Originale zu verändern.
+6. Neue Items sind anschließend ausgewählt.
+7. Ein einziges REAPER-Undo entfernt den gesamten erzeugten Schritt.
+
+Erst nach diesem Praxistest wird Basic als technisch bewiesen bezeichnet.
 
 ## Definition of Done für Basic
 
-Basic gilt erst als technisch bewiesen, wenn der vollständige Kreislauf funktioniert:
+Basic gilt erst als technisch bewiesen, wenn der vollständige Kreislauf praktisch funktioniert:
 
 `REAPER-Auswahl -> KI-Auftrag -> KI-Komposition -> nicht destruktives Ergebnis in REAPER -> nächster rekursiver Schritt`
 
