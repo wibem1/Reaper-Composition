@@ -1,10 +1,10 @@
 -- @description Composition Studio
--- @version 0.2-test9
+-- @version 0.2-test10
 -- @author Klangwerke
 -- @about Dockable AI chat and direct MIDI composition in REAPER.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.2-test9"
+local VERSION="0.2-test10"
 local EXT_SECTION,EXT_KEY="CompositionStudio","OpenAIAPIKey"
 
 if type(reaper.ImGui_CreateContext)~="function" then
@@ -12,7 +12,7 @@ if type(reaper.ImGui_CreateContext)~="function" then
   return
 end
 
-local ctx=reaper.ImGui_CreateContext(SCRIPT_NAME)
+local ctx=reaper.ImGui_CreateContext(SCRIPT_NAME,reaper.ImGui_ConfigFlags_DockingEnable())
 local open=true
 local input=""
 local busy=false
@@ -37,8 +37,6 @@ local function utf8_from_codepoint(cp)
   return "�"
 end
 
--- Some API text can contain a second escaped Unicode layer (for example \\u2013).
--- Decode any such residual sequences after the normal JSON string pass.
 local function decode_residual_unicode(s)
   if not s then return s end
   local changed=true
@@ -76,15 +74,7 @@ local function read_json_string(raw,q)
       elseif e=="u" then
         local hex=raw:sub(i+1,i+4)
         local cp=(#hex==4 and tonumber(hex,16)) or nil
-        if cp then
-          i=i+4
-          if cp>=0xD800 and cp<=0xDBFF and raw:sub(i+1,i+2)=="\\u" then
-            local lowhex=raw:sub(i+3,i+6)
-            local low=(#lowhex==4 and tonumber(lowhex,16)) or nil
-            if low and low>=0xDC00 and low<=0xDFFF then cp=0x10000+(cp-0xD800)*0x400+(low-0xDC00); i=i+6 end
-          end
-          out[#out+1]=utf8_from_codepoint(cp)
-        else out[#out+1]="u" end
+        if cp then i=i+4; out[#out+1]=utf8_from_codepoint(cp) else out[#out+1]="u" end
       else out[#out+1]=e end
     else out[#out+1]=c end
     i=i+1
