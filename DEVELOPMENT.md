@@ -1,151 +1,72 @@
-# DEVELOPMENT – Reaper Composition
+# DEVELOPMENT – Composition Studio for REAPER
 
-Dieses Dokument ist vor jeder Entwicklungsarbeit an diesem Repository zu lesen. Es ist Teil der technischen Spezifikation, nicht nur ein Entwicklungs-Tagebuch.
+Dieses Dokument ist vor jeder Entwicklungsarbeit zu lesen. Es ist Teil der technischen Spezifikation.
 
-## 1. Verbindliche Entwicklungsregeln
+## Verbindliche Architekturentscheidung – 2026-09-16
 
-### Stabilität vor Funktionsmenge
-Es werden keine Versionen zur Abnahme herausgegeben, von denen bereits bekannte automatisierbare Fehler bestehen. Erst einen zusammenhängenden Stand fertigstellen und prüfen, dann testen lassen.
+Der geplante Ausbau von Composition Lab V4.0 um eine Seite „DAW-Kommunikation“ wird nicht weiterverfolgt.
 
-### Keine Klecker-Versionen
-Nicht für jeden kleinen Fehler eine neue Installationsversion erzeugen. Zusammengehörige Korrekturen werden gesammelt, sauber in den Code integriert und gemeinsam geprüft.
+Composition Lab V3.2.9 bleibt eigenständig. Die beiden bereits funktionierenden REAPER-Bridge-Skripte für Composition Lab bleiben unverändert und werden durch Composition Studio nicht ersetzt.
 
-### Keine Patch-Ketten
-Neue Funktionen und Fehlerbehebungen werden in die passende vorhandene Struktur eingearbeitet. Keine wachsende Folge von nachträglichen Patch-Skripten als Architektur.
+Das neue Projekt heißt **Composition Studio** und läuft direkt innerhalb von REAPER als ReaScript/Lua. Laufzeitarchitektur:
 
-### Kurze Entwicklungszyklen
-REAPER-seitig bevorzugt ReaScript/Lua und vorhandene REAPER-Funktionen. Kompilierte Komponenten nur, wenn eine benötigte Funktion anders nachweislich nicht sinnvoll erreichbar ist.
+`REAPER + Composition Studio.lua + KI-APIs`
 
-### Verbindlicher REAPER-Arbeitsstand
-Die produktiven REAPER-Aktionen liegen lokal unter:
+Composition Lab ist keine Laufzeitabhängigkeit. Bewährte Konzepte und geeignete Logik dürfen als Entwicklungsquelle übernommen werden.
 
-`~/Library/Application Support/REAPER/Scripts/Composition Lab/`
+## Entwicklungsregeln
 
-Die bestehenden Aktionsdateien und Shortcuts bleiben erhalten:
+- Stabilität vor Funktionsmenge.
+- Keine Klecker-Versionen.
+- Keine Patch-Ketten; Änderungen sauber in die vorhandene Struktur integrieren.
+- ReaScript/Lua hat Vorrang. Keine kompilierte Extension, solange eine benötigte Funktion mit REAPER/ReaScript sinnvoll erreichbar ist.
+- Kein Neubau von DAW-Funktionen, die REAPER bereits bereitstellt.
+- Bestehende Composition-Lab-Skripte nicht verändern.
+- `Composition Studio.lua` ist eine neue, eigenständige REAPER-Action.
+- Normaler Entwicklungszyklus: Lua-Code ändern, in REAPER neu ausführen, testen. Kein App-Build und keine Installationsserie.
+- Dokumentation vor Änderungen lesen und bei Architekturänderungen aktualisieren.
+- Freie natürliche Kompositionsaufträge haben Vorrang vor starren musikalischen Promptregeln.
 
-- `Composition Lab - Send to Composition Lab.lua`
-- `Composition Lab - Import from Composition Lab.lua`
+## Musikalisches Leitbild
 
-Keine Umbenennung und keine parallelen Ersatz-Aktionen ohne zwingenden Grund.
+REAPER ist Projektzustand, Arrangement und musikalischer Arbeitsraum. Composition Studio ermöglicht rekursives Komponieren auf ausgewähltem Material.
 
-### Installation minimieren
-Normale Änderungen werden in bestehende Dateien integriert. Keine wiederholten großen Build- und Installationsprozeduren und keine Serie von Test-Apps.
+Die Auswahl bestimmt, welche Musik die KI kennt. Der freie Auftrag bestimmt, was unverändert bleibt, bearbeitet oder neu ergänzt wird. Keine TARGET-/CONTEXT-Markierungen.
 
-### Versionsdisziplin
-Jeder freigegebene Teststand erhält eine eindeutige Versions-/Buildnummer. Git-Commits beschreiben einen tatsächlichen zusammenhängenden Entwicklungsschritt.
+Originalmaterial wird standardmäßig geschützt. KI-Ergebnisse werden zunächst nicht destruktiv erzeugt und müssen mit REAPER Undo rückgängig zu machen sein.
 
-### Dokumentation zuerst lesen
-Vor Änderungen: README.md, DEVELOPMENT.md und relevante Dateien unter docs/ lesen. Nach wesentlichen Architekturentscheidungen, Fehlerfällen oder Änderungen DEVELOPMENT.md aktualisieren.
+## Zweistufige Entwicklung
 
-## 2. Musikalisches Leitbild
+### Schritt 1 – Composition Studio Basic
 
-Das System soll kreatives Komponieren unterstützen, nicht musikalische Entscheidungen durch ein starres Regelwerk ersetzen. Freie natürliche Kompositionsaufträge haben Vorrang vor immer detaillierteren technischen Promptvorgaben.
+Einfaches Interface, aber vollständiger technischer Kern:
 
-REAPER ist der dauerhafte musikalische Arbeitsraum. Die KI arbeitet rekursiv auf genau dem Material, das in REAPER ausgewählt und übertragen wurde.
+1. ausgewählte MIDI-Items direkt erkennen
+2. MIDI-Inhalt, Spuren und relative musikalische Lage lesen
+3. freien Kompositionsauftrag erfassen
+4. KI-API direkt aus der REAPER-Lösung ansprechen
+5. Ergebnis validieren
+6. vorhandene Stimmen nicht destruktiv variieren
+7. neue Stimmen als neue Items/Tracks erzeugen
+8. Mehrspurigkeit und REAPER Undo
+9. Ergebnis unmittelbar für den nächsten rekursiven Schritt verwenden
 
-**Wichtige Festlegung:** Es gibt auf REAPER-Seite keine technischen TARGET-/CONTEXT-Markierungen. Alle ausgewählten MIDI-Items werden gemeinsam als musikalischer Kontext übertragen. Der freie Kompositionsauftrag bestimmt semantisch, was unverändert bleiben, verändert oder neu ergänzt werden soll.
+Basic ist kein Wegwerfprototyp.
 
-Beispiele:
+### Schritt 2 – Komfortversion
 
-- Auswahl Klavier + Cello; Auftrag: „Klavier unverändert lassen, Cello überarbeiten.“
-- Auswahl Klavier; Auftrag: „Füge eine Klarinette hinzu.“
-- Auswahl mehrerer Stimmen; Auftrag: „Entwickle daraus eine neue gemeinsame Passage.“
+Erst nach bewiesenem Basic-Kern: ansprechendes dockbares GUI, MusicChat, Provider-/Modellauswahl, Variantenverwaltung, A/B-Arbeit und weitere Komfortfunktionen.
 
-Dasselbe Material kann im nächsten Schritt durch einen anderen Auftrag eine andere Rolle erhalten.
+## V0.1 – erster praktischer Test
 
-## 3. Technisches Zielbild
+Die erste Stufe enthält bewusst noch keine KI. `Composition Studio.lua` ermittelt direkt alle ausgewählten MIDI-Items und zeigt Trackname, Start, Länge und Notenzahl an.
 
-### REAPER-Seite
-ReaScript/Lua übernimmt:
+Ziel des ersten manuellen Tests: beweisen, dass das neue eigenständige Script in REAPER läuft und die Auswahl zuverlässig erkennt. Erst danach wird derselbe Kern um musikalische Datenerfassung und KI erweitert.
 
-- Ermitteln der ausgewählten MIDI-Items/Tracks
-- Übertragung der relativen Zeitpositionen und Tracknamen
-- Übertragung relevanter MIDI-Ereignisse
-- sichere Rückgabe von Ergebnissen
-- später explizite Anwendung der Rückgabeaktionen unverändert / bearbeitet / neu
+## Definition of Done für Basic
 
-### Bridge
-Der vorhandene Roundtrip `CompositionLab-Reaper-Bridge-0.6` ist die stabile Ausgangsbasis. Er unterstützt bereits Mehrspurigkeit, relative Zeitpositionen, Tracknamen, Noten sowie weitere rohe MIDI-Ereignisse einschließlich CC, Program Change, Pitch Bend, Pressure, SysEx/Meta und REAPER-CCBZ.
+Basic gilt erst als technisch bewiesen, wenn der vollständige Kreislauf funktioniert:
 
-Die Bridge bleibt Transportebene. Sie wird weder zweite DAW noch zweite Kompositionsengine.
+`REAPER-Auswahl -> KI-Auftrag -> KI-Komposition -> nicht destruktives Ergebnis in REAPER -> nächster rekursiver Schritt`
 
-### Composition Lab / KI-Seite
-Composition Lab erhält mit V4.0 eine eigene Seite **DAW-Kommunikation**. MusicChat bleibt die musikalische Dialog- und Kompositionsebene. Die neue Seite verwaltet das aus der DAW empfangene Material und macht die beabsichtigte Rückgabe explizit sichtbar.
-
-Vorgesehene Rückgabesemantik:
-
-- **unverändert** – vorhandenes REAPER-Material bleibt bestehen
-- **bearbeitet** – eine neue, klar zuordenbare Version eines vorhandenen Elements
-- **neu** – neu komponiertes Material ohne vorhandenes Quellelement
-
-Nicht destruktives Verhalten ist Standard. Ein stilles Überschreiben vorhandenen Materials ist nicht zulässig.
-
-## 4. Bereits erreichter Stand
-
-Der grundlegende REAPER-MIDI-Roundtrip existiert bereits und muss nicht neu gebaut werden:
-
-1. ausgewählte MIDI-Items werden an Composition Lab übertragen,
-2. Mehrspurigkeit und relative Lage bleiben erhalten,
-3. Composition Lab kann das Material laden,
-4. ein Ergebnis kann zurückgegeben und von REAPER importiert werden,
-5. breite MIDI-Ereignisdaten werden im Bridge-Format berücksichtigt.
-
-Die alten produktiven Skripte wurden wiedergefunden und unverändert unter `scripts/legacy/` im Repository gesichert. Der lokale produktive Pfad bleibt jedoch `Scripts/Composition Lab`.
-
-## 5. Nächster Entwicklungsschritt – Composition Lab V4.0
-
-Die nächste zusammenhängende Stufe ist die neue App-Seite **DAW-Kommunikation**. Tab-Reihenfolge:
-
-`Main – Noten – DAW-Kommunikation – Technik`
-
-Ziele:
-
-1. empfangenes DAW-Material übersichtlich anzeigen,
-2. vorhandenen MusicChat für freie Kompositionsaufträge weiterverwenden,
-3. Ergebnis und Rückgabeabsicht pro Stimme/Element sichtbar machen,
-4. bestehende Bridge für den Transport weiterverwenden,
-5. das Protokoll anschließend nur soweit erweitern, wie die explizite Rückgabesemantik es tatsächlich erfordert.
-
-REAPER ist zuerst Ziel-DAW. Die Architektur soll später ohne neue Kompositionsengine auch Studio One/Fender Studio oder Ableton anbinden können.
-
-## 6. Teststrategie
-
-Vor einer Übergabe werden soweit automatisierbar geprüft:
-
-- Swift-/Lua-Syntax und Buildfähigkeit der geänderten Komponenten
-- leeres Projekt / keine Auswahl
-- ein MIDI-Item
-- mehrere MIDI-Items
-- mehrere Tracks
-- unterschiedliche Item-Startpositionen
-- Tempo-/Taktmetadaten
-- Erhalt unterstützter Nicht-Noten-MIDI-Ereignisse
-- sichere Behandlung fehlender Dateien/Daten
-- keine unbeabsichtigte Änderung vorhandener Items
-- korrekte Tab-Reihenfolge und DAW-Seitenzustände
-
-REAPER-spezifische Interaktion, die nicht automatisiert simuliert werden kann, wird als klar begrenzter manueller Test ausgewiesen.
-
-## 7. Bekannte Erfahrungen aus Vorgängerarbeiten
-
-Bereits gelöste oder besonders zu schützende Punkte:
-
-- Rückgabe erzeugte früher unerwünschte Spurkopien.
-- Tempo war zeitweise fälschlich auf 120 BPM festgelegt.
-- Mehrspurübertragung musste stabilisiert werden.
-- Eine Rückgabe mit dichtem Notenmaterial führte zeitweise zu einem Absturz.
-- Leere Projekte benötigen Fehlerabfang statt Absturz.
-- SWS/Trackfarben sind nützlich, dürfen aber keine harte Kernabhängigkeit werden.
-
-Diese Fälle dürfen durch V4.0 nicht regressieren.
-
-## 8. Definition of Done für einen Teststand
-
-Ein Stand wird erst zur manuellen Abnahme gegeben, wenn:
-
-- der geplante Umfang vollständig implementiert ist,
-- bekannte automatisierbare Fehler behoben sind,
-- Tests dokumentiert sind,
-- Versions-/Buildnummer aktualisiert ist,
-- Dokumentation dem Code entspricht,
-- Installation/Update so klein wie möglich gehalten wurde.
+Automatisierbare Fehler werden vor Übergabe behoben. REAPER-spezifische Interaktion wird als klar begrenzter manueller Test ausgewiesen.
