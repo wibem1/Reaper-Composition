@@ -1,15 +1,12 @@
 -- @description Composition Studio
--- @version 0.2-test6
+-- @version 0.2-test7
 -- @author Klangwerke
 -- @about Dockable AI chat and direct MIDI composition in REAPER.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.2-test6"
+local VERSION="0.2-test7"
 local EXT_SECTION,EXT_KEY="CompositionStudio","OpenAIAPIKey"
 
--- ReaImGui detection: CreateContext is the reliable availability test on the
--- installation already proven with 0.2-test4. Do not reject a working install
--- because one widget symbol is resolved differently by the installed binding.
 if type(reaper.ImGui_CreateContext)~="function" then
   reaper.ShowMessageBox("Composition Studio benötigt ReaImGui.",SCRIPT_NAME,0)
   return
@@ -21,16 +18,17 @@ local input=""
 local busy=false
 local history={{role="KI",text="Composition Studio ist bereit. Du kannst mit mir über die Musik sprechen oder mir einen Kompositionsauftrag geben."}}
 
+-- ReaImGui 0.10: font size moved from CreateFont to PushFont.
 local font=nil
 if type(reaper.ImGui_CreateFont)=="function" then
-  local ok,f=pcall(reaper.ImGui_CreateFont,"sans-serif",18)
+  local ok,f=pcall(reaper.ImGui_CreateFont,"sans-serif")
   if ok then font=f end
 end
 if font and type(reaper.ImGui_Attach)=="function" then pcall(reaper.ImGui_Attach,ctx,font) end
 
 local function push_font()
   if not font or type(reaper.ImGui_PushFont)~="function" then return false end
-  local ok=pcall(reaper.ImGui_PushFont,ctx,font)
+  local ok=pcall(reaper.ImGui_PushFont,ctx,font,18)
   return ok
 end
 local function pop_font(pushed) if pushed and type(reaper.ImGui_PopFont)=="function" then reaper.ImGui_PopFont(ctx) end end
