@@ -1,6 +1,6 @@
 # Reaper Composition
 
-Reaper Composition ist eine schlanke KI-Kompositionsschicht für REAPER. REAPER bleibt DAW, Projektzustand und musikalischer Arbeitsraum; die KI wird gezielt für rekursive Kompositionsschritte eingesetzt.
+Reaper Composition ist die Architektur- und ReaScript-Seite der rekursiven DAW-Komposition mit Composition Lab. REAPER bleibt DAW, Projektzustand und musikalischer Arbeitsraum; Composition Lab/MusicChat liefert die semantische KI-Kompositionsschicht.
 
 ## Ziel
 
@@ -9,46 +9,49 @@ Nicht nur komplette MIDI-Kompositionen erzeugen, sondern vorhandene Musik schrit
 - einzelne Stimmen, MIDI-Items oder Taktbereiche bearbeiten
 - neue Stimmen zu vorhandenem Material komponieren
 - Varianten erzeugen und vergleichen
-- mehrere Stimmen gezielt zusammenführen oder weiterentwickeln
-- bereits gelungenes Material unverändert als Kontext verwenden
-- Ergebnisse sicher nach REAPER zurückgeben, ohne das Original zu zerstören
+- mehrere Stimmen zusammenführen oder weiterentwickeln
+- bereits gelungenes Material durch den Auftrag unverändert lassen
+- Ergebnisse sicher und nachvollziehbar nach REAPER zurückgeben
 
 Grundprinzip:
 
-`REAPER-Auswahl -> musikalisches Paket -> KI/MusicChat -> MIDI-Ergebnis -> REAPER`
+`REAPER-Auswahl -> Bridge -> Composition Lab / MusicChat -> Ergebnis + Rückgabeabsicht -> REAPER`
 
 ## Architekturprinzipien
 
 1. **Keine eigene DAW.** Arrangement, Transport, MIDI, Instrumente, Plugins, Mixer und Projektverwaltung bleiben Aufgaben von REAPER.
-2. **Keine normale Kompilationsschleife.** Die REAPER-Seite wird bevorzugt mit ReaScript/Lua umgesetzt.
-3. **Ziel und Kontext werden getrennt.** Ausgewähltes Material kann bearbeitet werden; weiteres Material kann der KI nur als musikalischer Kontext dienen.
-4. **Originale bleiben erhalten.** KI-Ergebnisse werden zunächst nicht destruktiv zurückgegeben.
-5. **Freier musikalischer Auftrag.** Die Schnittstelle soll die KI nicht durch unnötig starre Kompositionsregeln einschränken.
-6. **Rekursive Arbeit.** Ein KI-Ergebnis kann unmittelbar Ausgangspunkt des nächsten Kompositionsschritts werden.
+2. **Bestehenden Roundtrip nutzen.** Die funktionierende V0.6-ReaScript-Bridge ist Ausgangsbasis, kein Neubau.
+3. **Auswahl ist gemeinsamer musikalischer Kontext.** REAPER überträgt genau die ausgewählten MIDI-Items. Es gibt keine technischen TARGET-/CONTEXT-Markierungen.
+4. **Der freie Auftrag bestimmt die Rollen.** MusicChat entscheidet anhand des Auftrags, was unverändert bleibt, bearbeitet oder neu ergänzt wird.
+5. **Originale schützen.** Rückgaben sind standardmäßig nicht destruktiv.
+6. **Rekursive Arbeit.** Ein Ergebnis kann unmittelbar Ausgangspunkt des nächsten Kompositionsschritts werden.
 
-## Geplanter erster funktionsfähiger Zyklus
+## Bereits vorhanden
 
-1. MIDI-Material in REAPER auswählen.
-2. Auswahl samt notwendigem Projektkontext exportieren.
-3. Freien Kompositionsauftrag an MusicChat/KI übergeben.
-4. MIDI-Ergebnis empfangen.
-5. Ergebnis sicher als neue Variante in REAPER einsetzen.
-6. Diesen Vorgang ohne erneute Installation wiederholen.
+Die Bridge `CompositionLab-Reaper-Bridge-0.6` unterstützt bereits ausgewählte MIDI-Items, Mehrspurigkeit, relative Zeitpositionen, Tracknamen, Noten sowie relevante Nicht-Noten-Ereignisse wie CC, Program Change, Pitch Bend, Pressure und weitere rohe MIDI-Ereignisse.
+
+Die produktiven REAPER-Aktionen bleiben lokal unter `Scripts/Composition Lab` mit ihren bestehenden Dateinamen und Shortcuts. Eine Sicherung der wiedergefundenen Skripte liegt im Repository unter `scripts/legacy/`.
+
+## Nächster Schritt: Composition Lab V4.0
+
+Composition Lab erhält die neue Seite **DAW-Kommunikation**. Vorgesehene Tab-Reihenfolge:
+
+`Main – Noten – DAW-Kommunikation – Technik`
+
+Die Seite zeigt das empfangene DAW-Material, verwendet den bestehenden MusicChat für den freien Kompositionsauftrag und macht die geplante Rückgabe sichtbar: **unverändert**, **bearbeitet** oder **neu**.
 
 ## Projektstruktur
 
-- `scripts/` – ReaScript/Lua für REAPER
-- `bridge/` – Austauschformat und leichte Kommunikation zur KI-Seite
+- `scripts/` – ReaScript/Lua und gesicherte Bridge-Skripte
+- `bridge/` – Austauschformat und leichte Kommunikation
 - `docs/` – Architektur, Entscheidungen und Tests
 - `tests/` – automatisierbare Prüfungen
-- `DEVELOPMENT.md` – verbindliches Entwicklungsprotokoll
+- `DEVELOPMENT.md` – verbindliche Entwicklungsregeln
 
 ## Entwicklungsregel
 
-Vor jeder Änderung muss `DEVELOPMENT.md` gelesen und berücksichtigt werden. Keine ungeprüften Zwischenstände und keine Kette angehängter Notfall-Patches. Änderungen werden in den bestehenden Stand integriert und nachvollziehbar versioniert.
+Vor jeder Änderung muss `DEVELOPMENT.md` gelesen und berücksichtigt werden. Keine ungeprüften Zwischenstände, keine Klecker-Versionen und keine Kette nachträglicher Notfall-Patches.
 
 ## Status
 
-**Phase 0 – Projektstruktur und Architektur.**
-
-Noch keine Version zur Installation oder Abnahme. Zuerst wird die bestehende, früher bereits funktionierende REAPER-Verbindung rekonstruiert bzw. sauber neu als minimaler ReaScript-Kern aufgebaut.
+**Stabiler Basis-Roundtrip vorhanden. Aktive Entwicklungsstufe: Composition Lab V4.0 – DAW-Kommunikation und explizite Rückgabesemantik.**
