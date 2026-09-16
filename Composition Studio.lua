@@ -1,10 +1,10 @@
 -- @description Composition Studio
--- @version 0.2-test10
+-- @version 0.2-test11
 -- @author Klangwerke
 -- @about Dockable AI chat and direct MIDI composition in REAPER.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.2-test10"
+local VERSION="0.2-test11"
 local EXT_SECTION,EXT_KEY="CompositionStudio","OpenAIAPIKey"
 
 if type(reaper.ImGui_CreateContext)~="function" then
@@ -13,6 +13,13 @@ if type(reaper.ImGui_CreateContext)~="function" then
 end
 
 local ctx=reaper.ImGui_CreateContext(SCRIPT_NAME,reaper.ImGui_ConfigFlags_DockingEnable())
+-- REAPER soll Composition Studio als ganzen Docker-Tab behandeln. Ohne diese
+-- Einstellung kann Dear ImGui den eigenen Viewport nochmals teilen; dadurch
+-- entsteht der große leere Bereich neben dem eigentlichen Studio-Fenster.
+if type(reaper.ImGui_SetConfigVar)=="function" and type(reaper.ImGui_ConfigVar_DockingNoSplit)=="function" then
+  reaper.ImGui_SetConfigVar(ctx,reaper.ImGui_ConfigVar_DockingNoSplit(),1)
+end
+
 local open=true
 local input=""
 local busy=false
@@ -36,24 +43,16 @@ local function utf8_from_codepoint(cp)
   if cp<=0x10FFFF then return string.char(0xF0+math.floor(cp/0x40000),0x80+(math.floor(cp/0x1000)%0x40),0x80+(math.floor(cp/0x40)%0x40),0x80+(cp%0x40)) end
   return "�"
 end
-
 local function decode_residual_unicode(s)
   if not s then return s end
-  local changed=true
-  local rounds=0
+  local changed=true; local rounds=0
   while changed and rounds<3 do
     changed=false
-    s=s:gsub("\\u(%x%x%x%x)",function(hex)
-      local cp=tonumber(hex,16)
-      if not cp then return "\\u"..hex end
-      changed=true
-      return utf8_from_codepoint(cp)
-    end)
+    s=s:gsub("\\u(%x%x%x%x)",function(hex) local cp=tonumber(hex,16); if not cp then return "\\u"..hex end; changed=true; return utf8_from_codepoint(cp) end)
     rounds=rounds+1
   end
   return s
 end
-
 local function read_json_string(raw,q)
   if not raw or raw:sub(q,q)~='"' then return nil end
   local out,i={},q+1
@@ -61,27 +60,14 @@ local function read_json_string(raw,q)
     local c=raw:sub(i,i)
     if c=='"' then return decode_residual_unicode(table.concat(out)) end
     if c=="\\" then
-      i=i+1
-      local e=raw:sub(i,i)
-      if e=="n" then out[#out+1]="\n"
-      elseif e=="r" then out[#out+1]="\r"
-      elseif e=="t" then out[#out+1]="\t"
-      elseif e=="b" then out[#out+1]="\b"
-      elseif e=="f" then out[#out+1]="\f"
-      elseif e=='"' then out[#out+1]='"'
-      elseif e=="\\" then out[#out+1]="\\"
-      elseif e=="/" then out[#out+1]="/"
-      elseif e=="u" then
-        local hex=raw:sub(i+1,i+4)
-        local cp=(#hex==4 and tonumber(hex,16)) or nil
-        if cp then i=i+4; out[#out+1]=utf8_from_codepoint(cp) else out[#out+1]="u" end
-      else out[#out+1]=e end
+      i=i+1; local e=raw:sub(i,i)
+      if e=="n" then out[#out+1]="\n" elseif e=="r" then out[#out+1]="\r" elseif e=="t" then out[#out+1]="\t" elseif e=="b" then out[#out+1]="\b" elseif e=="f" then out[#out+1]="\f" elseif e=='"' then out[#out+1]='"' elseif e=="\\" then out[#out+1]="\\" elseif e=="/" then out[#out+1]="/" elseif e=="u" then local hex=raw:sub(i+1,i+4); local cp=(#hex==4 and tonumber(hex,16)) or nil; if cp then i=i+4; out[#out+1]=utf8_from_codepoint(cp) else out[#out+1]="u" end else out[#out+1]=e end
     else out[#out+1]=c end
     i=i+1
   end
 end
 local function response_output_text(raw)
-  local pos=1; while true do local s,e=raw:find('"type"%s*:%s*"output_text"',pos); if not s then return nil end local nt=raw:find('"type"%s*:',e+1); local be=nt and nt-1 or #raw; local ts,te=raw:find('"text"%s*:',e+1); if ts and ts<=be then local q=raw:find('"',te+1,true); if q and q<=be then local t=read_json_string(raw,q); if t and t~="" then return t end end end pos=e+1 end
+  local pos=1; while true do local s,e=raw:find('"type"%s*:%s*"output_text"',pos); if not s then return nil end; local nt=raw:find('"type"%s*:',e+1); local be=nt and nt-1 or #raw; local ts,te=raw:find('"text"%s*:',e+1); if ts and ts<=be then local q=raw:find('"',te+1,true); if q and q<=be then local t=read_json_string(raw,q); if t and t~="" then return t end end end; pos=e+1 end
 end
 local function get_api_key()
   local key=trim(reaper.GetExtState(EXT_SECTION,EXT_KEY)); if key~="" then return key end
@@ -90,16 +76,12 @@ local function get_api_key()
 end
 local function get_guid(item) local ok,g=reaper.GetSetMediaItemInfo_String(item,"GUID","",false); return ok and g or "" end
 local function selected_midi_items()
-  local items={}; for i=0,reaper.CountSelectedMediaItems(0)-1 do local item=reaper.GetSelectedMediaItem(0,i); local take=item and reaper.GetActiveTake(item)
-    if take and reaper.TakeIsMIDI(take) then local track=reaper.GetMediaItem_Track(item); local _,tn=reaper.GetTrackName(track); local _,kn=reaper.GetSetMediaItemTakeInfo_String(take,"P_NAME","",false); local _,count=reaper.MIDI_CountEvts(take); local notes={}
-      for n=0,(count or 0)-1 do local ok,_,muted,sppq,eppq,ch,pitch,vel=reaper.MIDI_GetNote(take,n); if ok and not muted then local st=reaper.MIDI_GetProjTimeFromPPQPos(take,sppq); local et=reaper.MIDI_GetProjTimeFromPPQPos(take,eppq); local sq=reaper.TimeMap2_timeToQN(0,st); local eq=reaper.TimeMap2_timeToQN(0,et); notes[#notes+1]={start_qn=sq,duration_qn=eq-sq,pitch=pitch,velocity=vel,channel=ch} end end
-      items[#items+1]={item=item,track=track,guid=get_guid(item),track_name=tn~="" and tn or "Unbenannte Spur",take_name=kn~="" and kn or "Unbenanntes MIDI-Item",notes=notes}
-    end end return items
+  local items={}; for i=0,reaper.CountSelectedMediaItems(0)-1 do local item=reaper.GetSelectedMediaItem(0,i); local take=item and reaper.GetActiveTake(item); if take and reaper.TakeIsMIDI(take) then local track=reaper.GetMediaItem_Track(item); local _,tn=reaper.GetTrackName(track); local _,kn=reaper.GetSetMediaItemTakeInfo_String(take,"P_NAME","",false); local _,count=reaper.MIDI_CountEvts(take); local notes={}; for n=0,(count or 0)-1 do local ok,_,muted,sppq,eppq,ch,pitch,vel=reaper.MIDI_GetNote(take,n); if ok and not muted then local st=reaper.MIDI_GetProjTimeFromPPQPos(take,sppq); local et=reaper.MIDI_GetProjTimeFromPPQPos(take,eppq); local sq=reaper.TimeMap2_timeToQN(0,st); local eq=reaper.TimeMap2_timeToQN(0,et); notes[#notes+1]={start_qn=sq,duration_qn=eq-sq,pitch=pitch,velocity=vel,channel=ch} end end; items[#items+1]={item=item,track=track,guid=get_guid(item),track_name=tn~="" and tn or "Unbenannte Spur",take_name=kn~="" and kn or "Unbenanntes MIDI-Item",notes=notes} end end; return items
 end
 local function context_text(items)
-  local l={string.format("Tempo %.3f BPM",reaper.Master_GetTempo())}; if #items==0 then l[#l+1]="KEIN MIDI-MATERIAL AUSGEWÄHLT." else for i,it in ipairs(items) do l[#l+1]=string.format("ITEM %d id=%s track=%s take=%s",i,it.guid,it.track_name,it.take_name); for _,n in ipairs(it.notes) do l[#l+1]=string.format("N %.5f %.5f %d %d %d",n.start_qn,n.duration_qn,n.pitch,n.velocity,n.channel) end end end return table.concat(l,"\n")
+  local l={string.format("Tempo %.3f BPM",reaper.Master_GetTempo())}; if #items==0 then l[#l+1]="KEIN MIDI-MATERIAL AUSGEWÄHLT." else for i,it in ipairs(items) do l[#l+1]=string.format("ITEM %d id=%s track=%s take=%s",i,it.guid,it.track_name,it.take_name); for _,n in ipairs(it.notes) do l[#l+1]=string.format("N %.5f %.5f %d %d %d",n.start_qn,n.duration_qn,n.pitch,n.velocity,n.channel) end end end; return table.concat(l,"\n")
 end
-local function recent_dialog() local l={}; local first=math.max(1,#history-7); for i=first,#history do l[#l+1]=history[i].role..": "..history[i].text end return table.concat(l,"\n") end
+local function recent_dialog() local l={}; local first=math.max(1,#history-7); for i=first,#history do l[#l+1]=history[i].role..": "..history[i].text end; return table.concat(l,"\n") end
 local function build_prompt(request,music)
  return [[Du bist der musikalische Dialogpartner von Composition Studio in REAPER.
 Du kannst mit dem Benutzer normal über Musik sprechen, Fragen beantworten und Kompositionsaufträge ausführen.
@@ -125,7 +107,7 @@ local function parse_results(text,items)
  local sources={}; for _,it in ipairs(items) do sources[it.guid]=it end; local results={}; text=(text or ""):gsub("```[%w_-]*",""):gsub("```",""); for line in text:gmatch("[^\r\n]+") do line=trim(line); if line~="" then local kind,source,rest=line:match("^CS|([^|]+)|([^|]+)|?(.*)$"); if not kind then return nil,"Unerwartete KI-Antwort." end; if kind=="unchanged" then if not sources[source] then return nil,"Unbekannte Quelle." end; results[#results+1]={kind=kind,source=source} elseif kind=="revised" or kind=="new" then if kind=="revised" and not sources[source] then return nil,"Unbekannte Quelle." end; if kind=="new" and source~="-" then return nil,"Ungültige neue Stimme." end; local name,nt=rest:match("^([^|]+)|(.+)$"); local notes=parse_notes(nt); if not name or not notes then return nil,"Ungültige Notendaten." end; results[#results+1]={kind=kind,source=source,name=trim(name),notes=notes} else return nil,"Unbekannter Ergebnistyp." end end end; return #results>0 and results or nil,"Leere KI-Antwort."
 end
 local function qn_to_time(qn) return reaper.TimeMap2_QNToTime(0,qn) end
-local function create_track(name,index) index=index or reaper.CountTracks(0); reaper.InsertTrackAtIndex(index,true); local t=reaper.GetTrack(0,index); if t then reaper.GetSetMediaTrackInfo_String(t,"P_NAME",name,true) end return t end
+local function create_track(name,index) index=index or reaper.CountTracks(0); reaper.InsertTrackAtIndex(index,true); local t=reaper.GetTrack(0,index); if t then reaper.GetSetMediaTrackInfo_String(t,"P_NAME",name,true) end; return t end
 local function create_midi_item(track,name,notes)
  local lo,hi=math.huge,-math.huge; for _,n in ipairs(notes) do lo=math.min(lo,n.start_qn); hi=math.max(hi,n.start_qn+n.duration_qn) end; if lo==math.huge or hi<=lo then return nil end; local item=reaper.CreateNewMIDIItemInProj(track,qn_to_time(lo),qn_to_time(hi),false); if not item then return nil end; local take=reaper.GetActiveTake(item); if not take then return nil end; reaper.GetSetMediaItemTakeInfo_String(take,"P_NAME",name,true); for _,n in ipairs(notes) do local s=reaper.MIDI_GetPPQPosFromProjTime(take,qn_to_time(n.start_qn)); local e=reaper.MIDI_GetPPQPosFromProjTime(take,qn_to_time(n.start_qn+n.duration_qn)); reaper.MIDI_InsertNote(take,false,false,s,e,n.channel,n.pitch,n.velocity,true) end; reaper.MIDI_Sort(take); return item
 end
@@ -139,6 +121,17 @@ end
 local function submit() local request=trim(input); if request=="" or busy then return end; input=""; add_message("Du",request); busy=true; process_request(request); busy=false end
 local function draw_history() for _,m in ipairs(history) do reaper.ImGui_TextWrapped(ctx,m.role..": "..m.text); reaper.ImGui_Spacing(ctx) end end
 local function loop()
- if not open then return end; reaper.ImGui_SetNextWindowSize(ctx,520,700,reaper.ImGui_Cond_FirstUseEver()); local visible; visible,open=reaper.ImGui_Begin(ctx,SCRIPT_NAME.."  "..VERSION,open); if visible then local pushed=push_font(); local items=selected_midi_items(); reaper.ImGui_Text(ctx,string.format("GPT-5.6  |  %d MIDI-Item(s) ausgewählt",#items)); reaper.ImGui_Separator(ctx); local avail_w,avail_h=reaper.ImGui_GetContentRegionAvail(ctx); local input_h=150; local button_h=38; local chat_h=math.max(120,avail_h-input_h-button_h-40); if reaper.ImGui_BeginChild(ctx,"##chat",avail_w,chat_h,reaper.ImGui_ChildFlags_Borders()) then draw_history(); reaper.ImGui_EndChild(ctx) end; reaper.ImGui_Spacing(ctx); local changed,new_input=reaper.ImGui_InputTextMultiline(ctx,"##composition_request",input,avail_w,input_h); if changed then input=new_input end; reaper.ImGui_Spacing(ctx); if reaper.ImGui_Button(ctx,busy and "Bitte warten…" or "Senden",120,button_h) and not busy then submit() end; reaper.ImGui_SameLine(ctx); if reaper.ImGui_Button(ctx,"Schließen",120,button_h) then open=false end; pop_font(pushed); reaper.ImGui_End(ctx) end; if open then reaper.defer(loop) end
+ if not open then return end
+ reaper.ImGui_SetNextWindowSize(ctx,520,700,reaper.ImGui_Cond_FirstUseEver())
+ local visible; visible,open=reaper.ImGui_Begin(ctx,SCRIPT_NAME.."  "..VERSION,open)
+ if visible then
+   local pushed=push_font(); local items=selected_midi_items(); reaper.ImGui_Text(ctx,string.format("GPT-5.6  |  %d MIDI-Item(s) ausgewählt",#items)); reaper.ImGui_Separator(ctx)
+   local avail_w,avail_h=reaper.ImGui_GetContentRegionAvail(ctx); local input_h=150; local button_h=38; local chat_h=math.max(120,avail_h-input_h-button_h-40)
+   if reaper.ImGui_BeginChild(ctx,"##chat",avail_w,chat_h,reaper.ImGui_ChildFlags_Borders()) then draw_history(); reaper.ImGui_EndChild(ctx) end
+   reaper.ImGui_Spacing(ctx); local changed,new_input=reaper.ImGui_InputTextMultiline(ctx,"##composition_request",input,avail_w,input_h); if changed then input=new_input end
+   reaper.ImGui_Spacing(ctx); if reaper.ImGui_Button(ctx,busy and "Bitte warten…" or "Senden",120,button_h) and not busy then submit() end; reaper.ImGui_SameLine(ctx); if reaper.ImGui_Button(ctx,"Schließen",120,button_h) then open=false end
+   pop_font(pushed); reaper.ImGui_End(ctx)
+ end
+ if open then reaper.defer(loop) end
 end
 loop()
