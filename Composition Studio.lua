@@ -1,10 +1,10 @@
 -- @description Composition Studio Basic
--- @version 0.1-test3
+-- @version 0.1-test4
 -- @author Klangwerke
 -- @about First end-to-end test: selected REAPER MIDI -> OpenAI -> new MIDI in REAPER.
 
 local SCRIPT_NAME = "Composition Studio Basic"
-local VERSION = "0.1-test3"
+local VERSION = "0.1-test4"
 local EXT_SECTION, EXT_KEY = "CompositionStudio", "OpenAIAPIKey"
 
 local function trim(s) return (s or ""):gsub("^%s+",""):gsub("%s+$","") end
@@ -29,7 +29,6 @@ local function read_json_string(raw, quote_pos)
   end
 end
 
--- Sucht gezielt ein content-Objekt mit type=output_text und liest NUR dessen text-Feld.
 local function response_output_text(raw)
   local pos=1
   while true do
@@ -88,9 +87,64 @@ local function context_text(items)
   return table.concat(l,"\n")
 end
 
+-- Eigenes schlichtes Eingabefenster, damit der Kompositionsauftrag gut lesbar ist.
 local function ask_request(n)
-  local ok,t=reaper.GetUserInputs(SCRIPT_NAME.." "..VERSION,1,string.format("%d MIDI-Item(s) erkannt. Freier Kompositionsauftrag:,extrawidth=420",n),"")
-  if not ok then return nil end; t=trim(t); if t=="" then return nil end; return t
+  local W,H=760,230
+  local text=""
+  local done,cancel=false,false
+  local mouse_was_down=false
+
+  gfx.init(SCRIPT_NAME.." "..VERSION,W,H,0)
+  gfx.setfont(1,"Arial",20)
+
+  local function inside(x,y,w,h)
+    return gfx.mouse_x>=x and gfx.mouse_x<=x+w and gfx.mouse_y>=y and gfx.mouse_y<=y+h
+  end
+
+  local function button(x,y,w,h,label)
+    gfx.set(0.88,0.88,0.88,1); gfx.rect(x,y,w,h,1)
+    gfx.set(0.25,0.25,0.25,1); gfx.rect(x,y,w,h,0)
+    local tw,th=gfx.measurestr(label); gfx.x=x+(w-tw)/2; gfx.y=y+(h-th)/2; gfx.drawstr(label)
+  end
+
+  while not done and not cancel do
+    gfx.set(0.96,0.96,0.96,1); gfx.rect(0,0,W,H,1)
+    gfx.set(0.12,0.12,0.12,1)
+    gfx.x=28; gfx.y=24; gfx.drawstr(string.format("%d MIDI-Item(s) erkannt",n))
+    gfx.setfont(1,"Arial",18)
+    gfx.x=28; gfx.y=58; gfx.drawstr("Freier Kompositionsauftrag:")
+
+    gfx.set(1,1,1,1); gfx.rect(28,92,W-56,48,1)
+    gfx.set(0.30,0.30,0.30,1); gfx.rect(28,92,W-56,48,0)
+    gfx.set(0.08,0.08,0.08,1); gfx.x=40; gfx.y=104
+    local shown=text
+    while gfx.measurestr(shown)>W-86 and #shown>1 do shown=shown:sub(2) end
+    gfx.drawstr(shown)
+
+    button(W-250,166,100,40,"Abbrechen")
+    button(W-132,166,104,40,"OK")
+    gfx.update()
+
+    local ch=gfx.getchar()
+    if ch<0 or ch==27 then cancel=true
+    elseif ch==13 then if trim(text)~="" then done=true end
+    elseif ch==8 then text=text:sub(1,-2)
+    elseif ch>=32 and ch<=0x10FFFF then
+      local ok,c=pcall(utf8.char,ch); if ok then text=text..c end
+    end
+
+    local down=(gfx.mouse_cap & 1)==1
+    if down and not mouse_was_down then
+      if inside(W-250,166,100,40) then cancel=true
+      elseif inside(W-132,166,104,40) and trim(text)~="" then done=true end
+    end
+    mouse_was_down=down
+  end
+
+  gfx.quit()
+  if cancel then return nil end
+  text=trim(text); if text=="" then return nil end
+  return text
 end
 
 local function build_prompt(request,music)
