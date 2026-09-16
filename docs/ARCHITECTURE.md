@@ -1,108 +1,113 @@
-# Architektur
+# Architektur – Composition Studio for REAPER
 
 ## Leitidee
 
-REAPER wird nicht erweitert, indem seine DAW-Funktionen nachgebaut werden. Composition Lab ergänzt eine semantische KI-Kompositionsschicht für rekursive Arbeit an vorhandener Musik.
+REAPER ist die DAW und der musikalische Projektzustand. Composition Studio ergänzt ausschließlich eine semantische KI-Kompositionsschicht für rekursive Arbeit an vorhandener Musik.
 
 ```text
 REAPER project
     |
-    | selected MIDI items
+    | selected MIDI items / tracks / ranges
     v
-existing ReaScript adapter
+Composition Studio.lua
     |
-    | CompositionLab-Reaper-Bridge
+    | shared musical context + free natural-language request
     v
-Composition Lab · DAW-Kommunikation
+AI composer
     |
-    | shared musical context + free request
+    | validated musical result + result semantics
     v
-MusicChat / AI composer
-    |
-    | musical result + return semantics
-    v
-ReaScript adapter
+Composition Studio.lua
     |
     v
-unchanged / revised / new material in REAPER
+non-destructive revised / new material directly in REAPER
 ```
+
+Es gibt keine Composition-Lab-Laufzeitkomponente und keine Send-/Import-Bridge zwischen zwei Apps.
 
 ## Auswahlmodell
 
-REAPER sendet genau die ausgewählten MIDI-Items. Alle übertragenen Items stehen der KI als gemeinsamer musikalischer Kontext zur Verfügung.
+Composition Studio liest direkt die in REAPER ausgewählten MIDI-Items. Alle ausgewählten Elemente stehen der KI als gemeinsamer musikalischer Kontext zur Verfügung.
 
-Es gibt **keine technischen TARGET-/CONTEXT-Rollen im REAPER-Projekt**. Der natürliche Kompositionsauftrag bestimmt, welche musikalische Rolle ein übertragenes Element in diesem konkreten Schritt hat.
+Es gibt keine technischen TARGET-/CONTEXT-Rollen. Der natürliche Kompositionsauftrag bestimmt die musikalische Rolle im jeweiligen Arbeitsschritt.
 
 Beispiel:
 
 `Klavier unverändert lassen, Cello überarbeiten und eine Klarinette ergänzen.`
 
-Die Auswahl kann Klavier und Cello enthalten. Aus dem Auftrag ergeben sich die Rückgaberollen: Klavier unverändert, Cello bearbeitet, Klarinette neu.
-
-## Bestehendes Composition Package
-
-Der stabile Ausgangspunkt ist `CompositionLab-Reaper-Bridge-0.6`. Bereits transportiert werden insbesondere:
-
-- Format-/Quelleninformation
-- Tempo und Taktart
-- mehrere Tracks
-- Tracknamen
-- relative musikalische Zeitlage
-- Noten
-- rohe MIDI-Ereignisse, darunter CC, Program Change, Pitch Bend, Pressure, SysEx/Meta und REAPER-CCBZ
-
-Das Protokoll wird nicht vorsorglich neu entworfen. Erweiterungen erfolgen nur dort, wo die neue Rückgabesemantik zusätzliche Identität oder Metadaten tatsächlich benötigt.
-
-## DAW-Kommunikation in Composition Lab V4.0
-
-Die App erhält eine eigene Seite zwischen Noten und Technik:
-
-`Main – Noten – DAW-Kommunikation – Technik`
-
-Aufgaben dieser Seite:
-
-1. Quelle und empfangenes DAW-Material darstellen.
-2. Track-/Stimmenübersicht des übertragenen Materials zeigen.
-3. den vorhandenen MusicChat als freien Kompositionsdialog verwenden.
-4. Ergebniszuordnung verständlich darstellen.
-5. die Rückgabe nach REAPER kontrolliert auslösen.
-
-Die Seite ist Verwaltungs- und Kommunikationsschicht, keine zweite Kompositionsengine.
-
-## Rückgabesemantik
-
-Für jedes relevante Ergebnis gibt es drei semantische Zustände:
-
-- **unverändert** – vorhandenes REAPER-Material bleibt bestehen und muss nicht erneut erzeugt werden.
-- **bearbeitet** – das Ergebnis gehört zu vorhandenem Material und wird standardmäßig nicht destruktiv als neue Version zurückgegeben.
-- **neu** – das Ergebnis hat kein vorhandenes Quellelement und wird als neues Material an geeigneter Position/Spur angelegt.
-
-Damit `bearbeitet` später eindeutig auf ein konkretes REAPER-Item bezogen werden kann, darf das Bridge-Protokoll um stabile Quellidentitäten erweitert werden. Diese Erweiterung muss rückwärtskompatibel zur funktionierenden V0.6-Basis bleiben.
+Sind Klavier und Cello ausgewählt, ergibt sich allein aus dem Auftrag: Klavier ist Kontext und bleibt bestehen, Cello wird bearbeitet, Klarinette wird neu erzeugt.
 
 ## Verantwortlichkeiten
 
 ### REAPER
-Auswahl, Arrangement, Spuren, Clips/Items, Instrumente, Mixer, Transport, Projektzustand.
 
-### Bridge
-Transport der ausgewählten musikalischen Daten und der für eine sichere Rückgabe nötigen Metadaten.
+Arrangement, Spuren, Items, Instrumente, Mixer, Transport, Tempo-/Taktkarte, MIDI-Editor, Projektzustand und Undo.
 
-### Composition Lab / DAW-Kommunikation
-Darstellung des empfangenen Materials, Verwaltung des rekursiven Arbeitsschritts und explizite Rückgabeabsicht.
+### Composition Studio.lua
 
-### MusicChat / KI
-Musikalische Analyse, Komposition und Transformation anhand des freien Auftrags und des ausgewählten Materials.
+- aktuelle musikalische Auswahl erfassen
+- MIDI-Daten und notwendige Projektmetadaten lesen
+- freien Auftrag erfassen
+- Kontext kompakt für die KI serialisieren
+- KI-Kommunikation durchführen
+- Antwort validieren
+- Ergebnissemantik anwenden
+- neue oder bearbeitete Musik nicht destruktiv in REAPER erzeugen
+
+### KI
+
+Musikalische Analyse, Komposition und Transformation anhand des freien Auftrags und des ausgewählten Materials. Die KI soll musikalisch entscheiden können; das Script soll sie nicht durch unnötige Kompositionsregeln deterministisch einschränken.
+
+## Interne musikalische Darstellung
+
+Für die KI wird keine MIDI-Datei hin- und hergeschickt. Composition Studio erzeugt intern eine kompakte strukturierte Darstellung der ausgewählten Musik. Benötigt werden mindestens:
+
+- Spur-/Item-Identität für sichere Rückzuordnung
+- Spur- und Take-Namen
+- musikalische Start-/Endlage
+- Tempo und Taktart, soweit für den Kontext erforderlich
+- Noten mit Start, Dauer, Tonhöhe, Velocity, Kanal
+- später bei Bedarf relevante CC-, Program-Change-, Pitch-Bend- und weitere MIDI-Ereignisse
+
+Die Darstellung ist ein internes Protokoll von Composition Studio und keine Verbindung zu Composition Lab.
+
+## Ergebnissemantik
+
+Die KI-Antwort muss zwischen musikalischem Inhalt und technischer Zuordnung unterscheiden können. Für Basic reichen drei Bedeutungen:
+
+- `unchanged`: vorhandenes Material bleibt unangetastet
+- `revised`: neue nicht destruktive Variante eines vorhandenen Quellelements
+- `new`: neue Stimme / neues musikalisches Material
+
+Composition Studio validiert technische Felder, bevor REAPER verändert wird. Eine fehlerhafte oder unvollständige Antwort darf das Projekt nicht beschädigen.
+
+## Nicht destruktives Arbeiten
+
+Originale werden standardmäßig nicht überschrieben. Eine überarbeitete Stimme wird zunächst als neue Variante/Item erzeugt. Neue Stimmen werden als neue Items bzw. bei Bedarf neue Tracks angelegt. Ein kompletter Apply-Vorgang wird in einen REAPER-Undo-Schritt gekapselt.
+
+## KI-Kommunikation
+
+Composition Studio spricht die KI-APIs selbst an. API-Schlüssel dürfen weder im Repository noch fest im Lua-Code gespeichert werden.
+
+Für Basic soll die Lösung möglichst ohne zusätzliche REAPER-Erweiterung funktionieren. Auf macOS kann ein lokaler HTTPS-Aufruf über das vorhandene Systemwerkzeug `curl` als Transport dienen. Die endgültige Implementierung muss verhindern, dass ein fehlgeschlagener Netzwerk-/KI-Aufruf Änderungen am REAPER-Projekt hinterlässt.
+
+## Basic vor Komfort
+
+Die erste Entwicklungsstufe beweist den vollständigen technischen Kreislauf. Das GUI bleibt bewusst klein. Erst danach wird derselbe Kern um ein komfortables dockbares Interface, MusicChat, Provider-/Modellauswahl und Variantenverwaltung ergänzt.
 
 ## Abgrenzung
 
 Nicht neu zu bauen sind:
 
-- eigener Transport als DAW-Ersatz
-- eigener Mixer
+- Transport
+- Mixer
 - Plugin-Hosting
-- Piano Roll als DAW-Ersatz
+- Piano Roll
 - Audio-Engine
 - Instrumentenverwaltung
 - eigene Projektdatei als Ersatz für `.rpp`
+- eine zweite DAW-Oberfläche
 
-Composition Lab darf seine bereits vorhandenen Player-, Noten- und Projektfunktionen behalten; sie werden jedoch nicht zu einer neuen DAW ausgebaut.
+## Altbestand
+
+Composition Lab V3.2.9 und seine funktionierenden REAPER-Send-/Import-Skripte bleiben unverändert. Sie sind ein separates bestehendes System und keine Komponente von Composition Studio.
