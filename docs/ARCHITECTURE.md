@@ -95,6 +95,31 @@ Für Basic soll die Lösung möglichst ohne zusätzliche REAPER-Erweiterung funk
 
 Die erste Entwicklungsstufe beweist den vollständigen technischen Kreislauf. Das GUI bleibt bewusst klein. Erst danach wird derselbe Kern um ein komfortables dockbares Interface, MusicChat, Provider-/Modellauswahl und Variantenverwaltung ergänzt.
 
+## Projektleitlinien: Verständlichkeit, Wiederverwendung und Lizenzen
+
+Composition Studio soll bewusst klein, modular und nachvollziehbar bleiben. Der Quelltext ist nicht nur für den Computer bestimmt, sondern soll auch für den Anwender lesbar und lernbar sein. Lua-Code wird deshalb klar strukturiert, verständlich benannt und an wichtigen Stellen auf Deutsch kommentiert. Große, miteinander verwobene Dateien und unnötige Framework-Schichten sollen vermieden werden.
+
+Bei vorhandenen Systemen und Projekten unterscheiden wir strikt zwischen Idee, Code und Abhängigkeit:
+
+- **MAGDA:** Die bisherigen Arbeiten sind ein Erfahrungs- und Ideenpool. Gute musikalische, konzeptionelle oder technische Verfahren dürfen übernommen bzw. in einfacher Form neu implementiert werden. Die MAGDA-Architektur und ihr Ballast werden nicht in Composition Studio hineingezogen.
+- **Composition Lab / MusicChat:** Bewährte Erfahrungen mit freiem KI-Dialog, Kompositionsaufträgen, MIDI-Darstellung und mehreren KI-Anbietern dienen als Referenz. Composition Lab wird dadurch nicht zur Laufzeitabhängigkeit von Composition Studio.
+- **REAPER-Skript-Ökosystem:** Vorhandene ReaScripts sollen gezielt untersucht werden, um bewährte REAPER-Techniken kennenzulernen und unnötige Neuerfindungen zu vermeiden.
+
+Für fremden Code gilt:
+
+1. **Ideen und Verfahren großzügig studieren.** Gute Lösungsprinzipien dürfen als Anregung für eine eigene, verständliche Implementierung dienen.
+2. **Fremden Quellcode nur bewusst übernehmen.** Vor einer direkten Übernahme wird die jeweilige Lizenz geprüft und dokumentiert.
+3. **Keine unnötigen Lizenzbindungen.** Code wird nicht übernommen, wenn dadurch unerwünschte Verpflichtungen oder Einschränkungen für Composition Studio entstehen.
+4. **Abhängigkeiten sparsam wählen.** Eine externe Bibliothek oder REAPER-Erweiterung wird nur eingesetzt, wenn ihr Nutzen den zusätzlichen Installations-, Wartungs- und Lizenzaufwand klar rechtfertigt.
+5. **Eigenständiger Kern.** Composition Studio soll möglichst ohne Sammlung fremder Skripte funktionieren. Techniken können gelernt und sauber selbst implementiert werden.
+6. **Lizenzherkunft dokumentieren.** Falls später tatsächlich fremder Code oder eine externe Bibliothek verwendet wird, werden Quelle, Lizenz und Verwendungszweck im Repository festgehalten.
+
+Leitsatz: **Ideen großzügig nutzen, fremden Code sparsam nutzen, Abhängigkeiten bewusst wählen.**
+
+## Entwicklungsprinzip: REAPER nicht nachbauen
+
+Alles, was REAPER bereits gut kann und im Arrangement sichtbar macht, bleibt Aufgabe von REAPER. Composition Studio baut insbesondere keine eigene grafische Repräsentation der MIDI-Items. Das Arrangement ist die visuelle Darstellung der Musik; Composition Studio zeigt nur die Informationen und Bedienelemente, die für den KI-Kompositionsdialog zusätzlich benötigt werden.
+
 ## Abgrenzung
 
 Nicht neu zu bauen sind:
