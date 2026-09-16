@@ -1,10 +1,10 @@
 -- @description Composition Studio
--- @version 0.2-test7
+-- @version 0.2-test8
 -- @author Klangwerke
 -- @about Dockable AI chat and direct MIDI composition in REAPER.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.2-test7"
+local VERSION="0.2-test8"
 local EXT_SECTION,EXT_KEY="CompositionStudio","OpenAIAPIKey"
 
 if type(reaper.ImGui_CreateContext)~="function" then
@@ -37,10 +37,55 @@ local function shell_quote(s) return "'"..tostring(s):gsub("'","'\\''").."'" end
 local function json_escape(s) return tostring(s or ""):gsub("\\","\\\\"):gsub('"','\\"'):gsub("\n","\\n"):gsub("\r","\\r"):gsub("\t","\\t") end
 local function read_file(p) local f=io.open(p,"rb"); if not f then return nil end local s=f:read("*a"); f:close(); return s end
 local function write_file(p,s) local f=io.open(p,"wb"); if not f then return false end f:write(s); f:close(); return true end
+
+-- Convert a Unicode code point to UTF-8 without relying on optional Lua libraries.
+local function utf8_from_codepoint(cp)
+  if cp<=0x7F then return string.char(cp) end
+  if cp<=0x7FF then return string.char(0xC0+math.floor(cp/0x40),0x80+(cp%0x40)) end
+  if cp<=0xFFFF then return string.char(0xE0+math.floor(cp/0x1000),0x80+(math.floor(cp/0x40)%0x40),0x80+(cp%0x40)) end
+  if cp<=0x10FFFF then return string.char(0xF0+math.floor(cp/0x40000),0x80+(math.floor(cp/0x1000)%0x40),0x80+(math.floor(cp/0x40)%0x40),0x80+(cp%0x40)) end
+  return "�"
+end
+
 local function read_json_string(raw,q)
-  if not raw or raw:sub(q,q)~='"' then return nil end local out,i={},q+1
-  while i<=#raw do local c=raw:sub(i,i); if c=='"' then return table.concat(out) end
-    if c=="\\" then i=i+1 local e=raw:sub(i,i); if e=="n" then out[#out+1]="\n" elseif e=="r" then out[#out+1]="\r" elseif e=="t" then out[#out+1]="\t" elseif e=='"' then out[#out+1]='"' elseif e=="\\" then out[#out+1]="\\" elseif e=="/" then out[#out+1]="/" else out[#out+1]=e end else out[#out+1]=c end i=i+1 end
+  if not raw or raw:sub(q,q)~='"' then return nil end
+  local out,i={},q+1
+  while i<=#raw do
+    local c=raw:sub(i,i)
+    if c=='"' then return table.concat(out) end
+    if c=="\\" then
+      i=i+1
+      local e=raw:sub(i,i)
+      if e=="n" then out[#out+1]="\n"
+      elseif e=="r" then out[#out+1]="\r"
+      elseif e=="t" then out[#out+1]="\t"
+      elseif e=="b" then out[#out+1]="\b"
+      elseif e=="f" then out[#out+1]="\f"
+      elseif e=='"' then out[#out+1]='"'
+      elseif e=="\\" then out[#out+1]="\\"
+      elseif e=="/" then out[#out+1]="/"
+      elseif e=="u" then
+        local hex=raw:sub(i+1,i+4)
+        local cp=(#hex==4 and tonumber(hex,16)) or nil
+        if cp then
+          i=i+4
+          -- JSON represents code points above U+FFFF as UTF-16 surrogate pairs.
+          if cp>=0xD800 and cp<=0xDBFF and raw:sub(i+1,i+2)=="\\u" then
+            local lowhex=raw:sub(i+3,i+6)
+            local low=(#lowhex==4 and tonumber(lowhex,16)) or nil
+            if low and low>=0xDC00 and low<=0xDFFF then
+              cp=0x10000+(cp-0xD800)*0x400+(low-0xDC00)
+              i=i+6
+            end
+          end
+          out[#out+1]=utf8_from_codepoint(cp)
+        else
+          out[#out+1]="u"
+        end
+      else out[#out+1]=e end
+    else out[#out+1]=c end
+    i=i+1
+  end
 end
 local function response_output_text(raw)
   local pos=1; while true do local s,e=raw:find('"type"%s*:%s*"output_text"',pos); if not s then return nil end local nt=raw:find('"type"%s*:',e+1); local be=nt and nt-1 or #raw; local ts,te=raw:find('"text"%s*:',e+1); if ts and ts<=be then local q=raw:find('"',te+1,true); if q and q<=be then local t=read_json_string(raw,q); if t and t~="" then return t end end end pos=e+1 end
