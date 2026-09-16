@@ -1,11 +1,12 @@
 -- @description Composition Studio
--- @version 0.2-test11
+-- @version 0.2-test12
 -- @author Klangwerke
 -- @about Dockable AI chat and direct MIDI composition in REAPER.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.2-test11"
+local VERSION="0.2-test12"
 local EXT_SECTION,EXT_KEY="CompositionStudio","OpenAIAPIKey"
+local WINDOW_STATE_KEY="WindowOpen"
 
 if type(reaper.ImGui_CreateContext)~="function" then
   reaper.ShowMessageBox("Composition Studio benötigt ReaImGui.",SCRIPT_NAME,0)
@@ -13,12 +14,13 @@ if type(reaper.ImGui_CreateContext)~="function" then
 end
 
 local ctx=reaper.ImGui_CreateContext(SCRIPT_NAME,reaper.ImGui_ConfigFlags_DockingEnable())
--- REAPER soll Composition Studio als ganzen Docker-Tab behandeln. Ohne diese
--- Einstellung kann Dear ImGui den eigenen Viewport nochmals teilen; dadurch
--- entsteht der große leere Bereich neben dem eigentlichen Studio-Fenster.
 if type(reaper.ImGui_SetConfigVar)=="function" and type(reaper.ImGui_ConfigVar_DockingNoSplit)=="function" then
   reaper.ImGui_SetConfigVar(ctx,reaper.ImGui_ConfigVar_DockingNoSplit(),1)
 end
+
+-- Merken, dass Composition Studio bewusst geöffnet wurde. Wird REAPER beendet,
+-- bleibt dieser Wert erhalten. Nur ein bewusstes Schließen des Fensters setzt ihn auf 0.
+reaper.SetExtState(EXT_SECTION,WINDOW_STATE_KEY,"1",true)
 
 local open=true
 local input=""
@@ -120,8 +122,13 @@ local function process_request(request)
 end
 local function submit() local request=trim(input); if request=="" or busy then return end; input=""; add_message("Du",request); busy=true; process_request(request); busy=false end
 local function draw_history() for _,m in ipairs(history) do reaper.ImGui_TextWrapped(ctx,m.role..": "..m.text); reaper.ImGui_Spacing(ctx) end end
+
+local function remember_closed()
+  reaper.SetExtState(EXT_SECTION,WINDOW_STATE_KEY,"0",true)
+end
+
 local function loop()
- if not open then return end
+ if not open then remember_closed(); return end
  reaper.ImGui_SetNextWindowSize(ctx,520,700,reaper.ImGui_Cond_FirstUseEver())
  local visible; visible,open=reaper.ImGui_Begin(ctx,SCRIPT_NAME.."  "..VERSION,open)
  if visible then
@@ -132,6 +139,6 @@ local function loop()
    reaper.ImGui_Spacing(ctx); if reaper.ImGui_Button(ctx,busy and "Bitte warten…" or "Senden",120,button_h) and not busy then submit() end; reaper.ImGui_SameLine(ctx); if reaper.ImGui_Button(ctx,"Schließen",120,button_h) then open=false end
    pop_font(pushed); reaper.ImGui_End(ctx)
  end
- if open then reaper.defer(loop) end
+ if open then reaper.defer(loop) else remember_closed() end
 end
 loop()
