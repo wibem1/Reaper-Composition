@@ -1,10 +1,10 @@
 -- @description Composition Studio
--- @version 0.5.12
+-- @version 0.5.13
 -- @author Klangwerke
 -- @about Dockable AI chat, controlled REAPER actions and MIDI composition.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.5.12"
+local VERSION="0.5.13"
 local EXT_SECTION="CompositionStudio"
 local PROVIDER_KEY,MODEL_KEY="AIProvider","AIModel"
 local KEY_NAMES={openai="OpenAIAPIKey",anthropic="AnthropicAPIKey",google="GoogleAPIKey"}
@@ -12,6 +12,8 @@ local MODELS={openai={{"GPT-5.6 Sol","gpt-5.6-sol"},{"GPT-5.6 Terra","gpt-5.6-te
 local provider=reaper.GetExtState(EXT_SECTION,PROVIDER_KEY); if provider=="" or not MODELS[provider] then provider="openai" end
 local model=reaper.GetExtState(EXT_SECTION,MODEL_KEY); if model=="" then model=MODELS[provider][1][2] end
 local WINDOW_STATE_KEY,HISTORY_KEY="WindowOpen","HistoryV1"
+local TITLE_KEY="LastWorkTitle"
+local work_title=reaper.GetProjExtState(0,EXT_SECTION,TITLE_KEY); if type(work_title)=="number" then local _,v=reaper.GetProjExtState(0,EXT_SECTION,TITLE_KEY); work_title=v end; work_title=tostring(work_title or ""):gsub("^%s+",""):gsub("%s+$","")
 local UPDATE_URL="https://raw.githubusercontent.com/wibem1/Reaper-Composition/composition-studio/Composition%20Studio.lua"
 local SCRIPT_PATH=(debug.getinfo(1,"S").source or ""):gsub("^@","")
 
@@ -43,6 +45,18 @@ if font and type(reaper.ImGui_Attach)=="function" then pcall(reaper.ImGui_Attach
 local function push_font() if not font then return false end; return pcall(reaper.ImGui_PushFont,ctx,font,18) end
 local function pop_font(x) if x then reaper.ImGui_PopFont(ctx) end end
 local function trim(s) return (s or ""):gsub("^%s+",""):gsub("%s+$","") end
+local function safe_work_title(t)
+ t=trim(t):gsub("[\r\n]"," "):gsub("[/\\:]","-"):gsub("%s+"," "):gsub("^%.*",""):gsub("%.*$","")
+ if #t>80 then t=t:sub(1,80):gsub("%s+$","") end
+ return t
+end
+local function title_from_draft(draft,request)
+ local t=tostring(draft or ""):match("^[Tt][Ii][Tt][Ee][Ll]%s*:%s*([^\n\r]+)") or tostring(draft or ""):match("^[Ww][Ee][Rr][Kk][Tt][Ii][Tt][Ee][Ll]%s*:%s*([^\n\r]+)")
+ t=safe_work_title(t or "")
+ if t=="" then t=safe_work_title(request or "") end
+ if t=="" then t="Neue Komposition" end
+ return t
+end
 local function shell_quote(s) return "'"..tostring(s):gsub("'","'\\''").."'" end
 local function json_escape(s) return tostring(s or ""):gsub("\\","\\\\"):gsub('"','\\"'):gsub("\n","\\n"):gsub("\r","\\r"):gsub("\t","\\t") end
 local function read_file(p) local f=io.open(p,"rb"); if not f then return nil end; local s=f:read("*a"); f:close(); return s end
@@ -112,7 +126,7 @@ local function finish_save_panel()
  elseif p.kind=="midi" then local ok,msg=write_last_midi_to(fn); update_status=msg end
 end
 local function save_diagnosis()
- begin_save_panel("diagnosis","Diagnose speichern","Composition-Studio-Diagnose-"..os.date("%Y%m%d-%H%M%S")..".json","json")
+ begin_save_panel("diagnosis","Diagnose speichern",safe_work_title(work_title~="" and work_title or "Composition Studio").." - Diagnose.json","json")
 end
 
 local function be16(n) return string.char(math.floor(n/256)%256,n%256) end
@@ -214,12 +228,12 @@ local function export_last_midi()
  local made=last_made; if #made==0 then made=recover_last_made() end
  local valid=0; for _,it in ipairs(made) do if reaper.ValidatePtr2(0,it,"MediaItem*") then valid=valid+1 end end
  if valid==0 then update_status="Noch keine gültige von Composition Studio erzeugte MIDI-Komposition zum Exportieren."; return end
- begin_save_panel("midi","MIDI exportieren","Composition-Studio-"..os.date("%Y%m%d-%H%M%S")..".mid","mid")
+ begin_save_panel("midi","MIDI exportieren",safe_work_title(work_title~="" and work_title or "Neue Komposition")..".mid","mid")
 end
 local function analysis_prompt(request,items,tracks) return [[Du analysierst das konkret übergebene MIDI-Material. Antworte musikalisch präzise als normaler Text. Erfinde nichts. Erzeuge kein MIDI und keine CS-Zeilen.]].."\nAUFTRAG:\n"..request.."\nMUSIK:\n"..music_context(items,tracks,false) end
 local function composition_prompt(request,items,tracks,is_new)
  if is_new then
-  return [[Komponiere das verlangte Stück musikalisch frei und eigenständig. Konzentriere dich ausschließlich auf musikalische Gestalt, Verlauf, Stimmen, Rhythmus, Harmonik, Artikulation und Charakter. Denke noch NICHT an MIDI-Codierung, QN-Werte, CS-Zeilen oder ein technisches Ausgabeformat. Schreibe einen vollständigen, konkret ausnotierbaren musikalischen Entwurf, aus dem anschließend eine andere technische Instanz die MIDI-Daten erzeugen kann. Mache keine Erläuterung über deine Arbeitsweise.]].."\n\nAUFTRAG:\n"..request
+  return [[Komponiere das verlangte Stück musikalisch frei und eigenständig. Konzentriere dich ausschließlich auf musikalische Gestalt, Verlauf, Stimmen, Rhythmus, Harmonik, Artikulation und Charakter. Denke noch NICHT an MIDI-Codierung, QN-Werte, CS-Zeilen oder ein technisches Ausgabeformat. Schreibe einen vollständigen, konkret ausnotierbaren musikalischen Entwurf, aus dem anschließend eine andere technische Instanz die MIDI-Daten erzeugen kann. Gib in der ersten Zeile lediglich einen kurzen passenden Werktitel als „Titel: …“ an; dies soll die musikalische Gestaltung nicht einschränken. Mache keine Erläuterung über deine Arbeitsweise.]].."\n\nAUFTRAG:\n"..request
  end
  return [[Du komponierst Musik in Composition Studio. Nutze das konkret übergebene vorhandene Material als musikalischen Kontext und erfülle den freien Auftrag eigenständig; füge keine unnötigen Regeln hinzu. TIME_SELECTION ist nur bei ausdrücklichem Bezug auf den markierten Bereich ein Zielbereich. Eine ausgewählte TRACK_GUID kann auch ohne ausgewähltes MIDI-Item direkt Ziel sein. Jedes neu erzeugte MIDI-Item MUSS einen passenden General-MIDI-Program-Change (0-127) erhalten.
 Antworte ausschließlich:
@@ -271,7 +285,7 @@ local function poll_job()
   add("KI","Ich konnte den Auftrag nicht eindeutig einem sicheren Vorgang zuordnen und habe nichts verändert."); busy=false; return
  elseif stage=="analysis" then add("KI",text); busy=false; return
  elseif stage=="musical_draft" then
-  diag_set("musical_draft",text); data.draft=text; local tp=midi_translation_prompt(data.request,text); diag_set("translation_prompt",tp); launch("composition",tp,key,data); return
+  diag_set("musical_draft",text); data.draft=text; work_title=title_from_draft(text,data.request); reaper.SetProjExtState(0,EXT_SECTION,TITLE_KEY,work_title); local tp=midi_translation_prompt(data.request,text); diag_set("translation_prompt",tp); launch("composition",tp,key,data); return
  elseif stage=="composition" then
   diag_set("composition_answer",text); local made,ae=apply_composition(text,data.full,data.music_tracks); diag_set("apply_result",made and ("created_items="..tostring(#made)) or ("ERROR: "..tostring(ae))); if not made then add("KI","Die musikalische Antwort konnte nicht sicher angewendet werden: "..tostring(ae)); busy=false; return end; local htr,hsl=initialize_halion_project(); diag_set("halion_result",string.format("auto_initialized_tracks=%d slots=%d",htr,hsl)); data.comp=text; data.made=made; last_made=made; local gs={}; for _,it in ipairs(made) do gs[#gs+1]=item_guid(it) end; reaper.SetProjExtState(0,EXT_SECTION,"LastMadeGUIDs",table.concat(gs,"\n")); persist_diag(); write_file(DIAG_CACHE_PATH,diag_json()); launch("summary",summary_prompt(data.request,text,made),key,data); return
  elseif stage=="summary" then add("KI",text); busy=false; return end
