@@ -1,10 +1,10 @@
 -- @description Composition Studio
--- @version 0.5.11
+-- @version 0.5.12
 -- @author Klangwerke
 -- @about Dockable AI chat, controlled REAPER actions and MIDI composition.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.5.11"
+local VERSION="0.5.12"
 local EXT_SECTION="CompositionStudio"
 local PROVIDER_KEY,MODEL_KEY="AIProvider","AIModel"
 local KEY_NAMES={openai="OpenAIAPIKey",anthropic="AnthropicAPIKey",google="GoogleAPIKey"}
@@ -91,6 +91,7 @@ local function restore_diag()
  end
 end
 restore_diag()
+local write_last_midi_to
 local save_panel=nil
 local function begin_save_panel(kind,title,default_name,ext)
  if save_panel then update_status="Ein Speichern-Dialog ist bereits geöffnet."; return end
@@ -130,10 +131,10 @@ end
 local function recover_last_made()
  local _,raw=reaper.GetProjExtState(0,EXT_SECTION,"LastMadeGUIDs"); if not raw or raw=="" then return {} end
  local wanted={}; for g in raw:gmatch("[^\r\n]+") do wanted[g]=true end; local found={}
- for i=0,reaper.CountMediaItems(0)-1 do local it=reaper.GetMediaItem(0,i); if wanted[item_guid(it)] then found[#found+1]=it end end
+ for i=0,reaper.CountMediaItems(0)-1 do local it=reaper.GetMediaItem(0,i); local ok,g=reaper.GetSetMediaItemInfo_String(it,"GUID","",false); if ok and wanted[g] then found[#found+1]=it end end
  return found
 end
-local function write_last_midi_to(fn)
+write_last_midi_to=function(fn)
  local valid={}; for _,it in ipairs(last_made) do if it and reaper.ValidatePtr2(0,it,"MediaItem*") then valid[#valid+1]=it end end
  if #valid==0 then valid=recover_last_made() end
  if #valid==0 then update_status="Noch keine gültige von Composition Studio erzeugte Komposition zum Exportieren."; return end
