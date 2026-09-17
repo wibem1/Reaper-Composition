@@ -1,10 +1,10 @@
 -- @description Composition Studio
--- @version 0.3-test9
+-- @version 0.3-test10
 -- @author Klangwerke
 -- @about Dockable AI chat, controlled REAPER actions and MIDI composition.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.3-test9"
+local VERSION="0.3-test10"
 local EXT_SECTION,EXT_KEY="CompositionStudio","OpenAIAPIKey"
 local WINDOW_STATE_KEY="WindowOpen"
 local HISTORY_KEY="HistoryV1"
@@ -184,8 +184,16 @@ local function selected_items(with_notes)
  end
  return a
 end
+local function time_selection_context()
+ local s,e=reaper.GetSet_LoopTimeRange(false,false,0,0,false)
+ if not s or not e or e<=s then return "TIME_SELECTION none" end
+ local sq=reaper.TimeMap2_timeToQN(0,s); local eq=reaper.TimeMap2_timeToQN(0,e)
+ local _,sm,sb=reaper.TimeMap2_timeToBeats(0,s)
+ local _,em,eb=reaper.TimeMap2_timeToBeats(0,e)
+ return string.format("TIME_SELECTION startQN=%.3f endQN=%.3f startBar=%d startBeat=%.3f endBar=%d endBeat=%.3f",sq,eq,(sm or 0)+1,(sb or 0)+1,(em or 0)+1,(eb or 0)+1)
+end
 local function compact_context(items)
- local l={string.format("Tempo %.2f BPM; selected MIDI items=%d",reaper.Master_GetTempo(),#items)}
+ local l={string.format("Tempo %.2f BPM; selected MIDI items=%d",reaper.Master_GetTempo(),#items),time_selection_context()}
  for i,it in ipairs(items) do l[#l+1]=string.format("ITEM %d id=%s track=%s take=%s rangeQN=%.3f..%.3f",i,it.guid,it.track_name,it.take_name,it.start_qn,it.end_qn) end
  return table.concat(l,"\n")
 end
@@ -207,6 +215,7 @@ NEED_MUSIC|kurze Begründung
 
 Erlaubte lokale Aktionen: ausgewähltes MIDI-Item transponieren; Item zeitlich verschieben; Item kopieren; Spur umbenennen.
 Nur angebotene ITEM_GUID/TRACK_GUID verwenden. Wenn mehrere Ziele möglich sind und der Auftrag sie nicht eindeutig bezeichnet: ASK.
+Eine vorhandene TIME_SELECTION ist ein vom Benutzer markierter musikalischer Zielbereich. Nutze sie zur räumlichen Einordnung eines Auftrags, aber erfinde keine Änderung, die der Benutzer nicht verlangt hat.
 SEMITONES ist eine ganze Zahl. DELTA_QN ist die Verschiebung in Viertelnoten; negativ=früher. Nutze Taktangaben nur, wenn sie aus dem Kontext eindeutig in QN umsetzbar sind; sonst ASK.
 Für Analyse, Komposition, Variation, Fortsetzung oder andere Aufgaben, die konkrete Noten benötigen: NEED_MUSIC.
 Für normale Unterhaltung ohne REAPER-Aktion: CHAT.
@@ -240,6 +249,7 @@ local function apply_composition(text,items)
 end
 local function composition_prompt(request,items)
  return [[Du komponierst Musik in Composition Studio. Nutze das übergebene Material als gemeinsamen musikalischen Kontext und erfülle den freien Auftrag musikalisch eigenständig. Füge keine unnötigen Regeln hinzu.
+Eine vorhandene TIME_SELECTION bezeichnet den vom Benutzer in REAPER markierten Zielbereich. Beziehe sie ein, wenn der Auftrag einen Abschnitt, eine Fortsetzung oder eine Ergänzung betrifft.
 Antworte ausschließlich mit technischen Ergebniszeilen:
 CS|unchanged|SOURCE_GUID
 CS|revised|SOURCE_GUID|NAME|startQN,durationQN,pitch,velocity,channel;...
@@ -261,7 +271,7 @@ local function process(request)
 end
 local function submit() local r=trim(input); if r=="" or busy then return end; input=""; info_visible=false; history_mode=false; add("Du",r); busy=true; process(r); busy=false end
 local function info_text()
- return "AKTUELLER STAND\n\nComposition Studio arbeitet direkt in REAPER. GPT-5.6 nutzt den Dialog und ausgewählte MIDI-Items als Kontext. Es kann MIDI analysieren und bearbeiten, Varianten bzw. neue MIDI-Items erzeugen sowie freigegebene REAPER-Aktionen ausführen. Änderungen lassen sich mit REAPER Undo rückgängig machen.\n\nWAS IST NEU? – "..VERSION.."\n\n• Update lädt die neueste Fassung direkt aus GitHub und startet Composition Studio anschließend neu.\n• Die interne Fensterkennung bleibt versionsunabhängig, damit REAPER die Dockingposition bei Updates beibehalten kann.\n• Die sichtbare Versionsnummer steht weiterhin im Fensterinhalt.\n• Verlauf und das 2×2-Buttonraster bleiben unverändert.\n\nIN DIESER VERSION BITTE TESTEN\n\n• Composition Studio einmal wie gewohnt andocken.\n• Bei einer späteren Version Update drücken: die neue Fassung soll geladen und automatisch gestartet werden.\n• Die Dockingposition soll dabei erhalten bleiben.\n• Wenn GitHub bereits dieselbe Version enthält, meldet Update: Bereits aktuell.\n• Prüfen, ob "..VERSION.." angezeigt wird."
+ return "AKTUELLER STAND\n\nComposition Studio arbeitet direkt in REAPER. GPT-5.6 nutzt den Dialog, ausgewählte MIDI-Items und jetzt auch die REAPER-Zeitauswahl als Kontext. Es kann MIDI analysieren und bearbeiten, Varianten bzw. neue MIDI-Items erzeugen sowie freigegebene REAPER-Aktionen ausführen. Änderungen lassen sich mit REAPER Undo rückgängig machen.\n\nWAS IST NEU? – "..VERSION.."\n\n• Eine REAPER-Zeitauswahl wird als musikalischer Zielbereich an die KI übergeben.\n• Anfang und Ende werden in Viertelnoten sowie Takt/Schlag beschrieben.\n• Damit kann ein freier Auftrag einen markierten Abschnitt räumlich eindeutig beziehen, ohne den musikalischen Prompt enger zu machen.\n• Der funktionierende GitHub-Updateweg bleibt unverändert.\n\nIN DIESER VERSION BITTE TESTEN\n\n• In REAPER einen Zeitbereich markieren, zum Beispiel vier Takte.\n• Ein passendes MIDI-Item auswählen.\n• Einen freien Auftrag geben, der sich auf den markierten Bereich bezieht, zum Beispiel: Ergänze in diesem Bereich eine zweite Stimme.\n• Prüfen, ob das neue Material im markierten musikalischen Bereich entsteht."
 end
 local function draw_history()
  if info_visible then reaper.ImGui_TextWrapped(ctx,info_text()); return end
