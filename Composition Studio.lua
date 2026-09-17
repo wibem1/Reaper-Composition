@@ -1,10 +1,10 @@
 -- @description Composition Studio
--- @version 0.5.9
+-- @version 0.5.10
 -- @author Klangwerke
 -- @about Dockable AI chat, controlled REAPER actions and MIDI composition.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.5.9"
+local VERSION="0.5.10"
 local EXT_SECTION="CompositionStudio"
 local PROVIDER_KEY,MODEL_KEY="AIProvider","AIModel"
 local KEY_NAMES={openai="OpenAIAPIKey",anthropic="AnthropicAPIKey",google="GoogleAPIKey"}
@@ -74,14 +74,15 @@ local function persist_diag()
  if ok and raw then reaper.SetExtState(EXT_SECTION,DIAG_STATE_KEY,raw,true) end
 end
 local diag_json
-local function diag_set(k,v) last_diag[k]=v; reaper.defer(persist_diag) end
+local DIAG_CACHE_PATH=reaper.GetResourcePath().."/Composition-Studio-Last-Diagnosis.json"
+local function diag_set(k,v) last_diag[k]=v; persist_diag(); local raw=diag_json(); if raw then write_file(DIAG_CACHE_PATH,raw) end end
 diag_json=function()
  local keys={"version","provider","model","request","context","controller_prompt","controller_answer","composition_prompt","musical_draft","translation_prompt","composition_answer","apply_result","halion_result"}; local a={"{\n  \"timestamp\": \""..json_escape(os.date("%Y-%m-%dT%H:%M:%S")).."\""}
  for _,k in ipairs(keys) do a[#a+1]=",\n  \""..k.."\": \""..json_escape(last_diag[k] or "").."\"" end; a[#a+1]="\n}\n"; return table.concat(a)
 end
 local function restore_diag()
- local raw=reaper.GetExtState(EXT_SECTION,DIAG_STATE_KEY)
- if raw=="" then return end
+ local raw=read_file(DIAG_CACHE_PATH) or reaper.GetExtState(EXT_SECTION,DIAG_STATE_KEY)
+ if not raw or raw=="" then return end
  local keys={"version","provider","model","request","context","controller_prompt","controller_answer","composition_prompt","musical_draft","translation_prompt","composition_answer","apply_result","halion_result"}
  for _,k in ipairs(keys) do
   local pat='"'..k..'"%s*:%s*"'
@@ -106,7 +107,7 @@ end
 local function save_diagnosis()
  local fn=choose_save_path("Diagnose speichern","Composition-Studio-Diagnose-"..os.date("%Y%m%d-%H%M%S")..".json","json")
  if not fn then update_status="Speichern abgebrochen."; return end
- if write_file(fn,diag_json()) then persist_diag(); update_status="Diagnose gespeichert: "..fn else update_status="Diagnose konnte nicht gespeichert werden." end
+ local raw=diag_json(); if write_file(fn,raw) then local chk=read_file(fn); if chk and #chk==#raw then persist_diag(); write_file(DIAG_CACHE_PATH,raw); update_status="Diagnose gespeichert: "..fn.." ("..tostring(#raw).." Bytes)" else update_status="Diagnose konnte nach dem Schreiben nicht verifiziert werden: "..fn end else update_status="Diagnose konnte nicht gespeichert werden: "..fn end
 end
 local function be16(n) return string.char(math.floor(n/256)%256,n%256) end
 local function be32(n) return string.char(math.floor(n/16777216)%256,math.floor(n/65536)%256,math.floor(n/256)%256,n%256) end
@@ -121,8 +122,15 @@ local function midi_track_chunk(events,name)
  for _,e in ipairs(events) do out[#out+1]=vlq(e.tick-last); out[#out+1]=e.data; last=e.tick end
  out[#out+1]=vlq(0)..string.char(0xFF,0x2F,0); local d=table.concat(out); return "MTrk"..be32(#d)..d
 end
+local function recover_last_made()
+ local _,raw=reaper.GetProjExtState(0,EXT_SECTION,"LastMadeGUIDs"); if not raw or raw=="" then return {} end
+ local wanted={}; for g in raw:gmatch("[^\r\n]+") do wanted[g]=true end; local found={}
+ for i=0,reaper.CountMediaItems(0)-1 do local it=reaper.GetMediaItem(0,i); if wanted[item_guid(it)] then found[#found+1]=it end end
+ return found
+end
 local function export_last_midi()
  local valid={}; for _,it in ipairs(last_made) do if it and reaper.ValidatePtr2(0,it,"MediaItem*") then valid[#valid+1]=it end end
+ if #valid==0 then valid=recover_last_made() end
  if #valid==0 then update_status="Noch keine gültige von Composition Studio erzeugte Komposition zum Exportieren."; return end
  local fn=choose_save_path("MIDI exportieren","Composition-Studio-"..os.date("%Y%m%d-%H%M%S")..".mid","mid"); if not fn then update_status="MIDI-Export abgebrochen."; return end
  local ppq=960; local chunks={}; local tempo=math.max(1,reaper.Master_GetTempo()); local us=math.floor(60000000/tempo+0.5); local tempo_data=string.char(0xFF,0x51,0x03,math.floor(us/65536)%256,math.floor(us/256)%256,us%256); chunks[#chunks+1]=midi_track_chunk({{tick=0,order=0,data=tempo_data}},"Tempo")
@@ -134,7 +142,7 @@ local function export_last_midi()
    chunks[#chunks+1]=midi_track_chunk(ev,name)
   end
  end
- local smf="MThd"..be32(6)..be16(1)..be16(#chunks)..be16(ppq)..table.concat(chunks); if write_file(fn,smf) then update_status="MIDI gespeichert: "..fn else update_status="MIDI konnte nicht gespeichert werden." end
+ local smf="MThd"..be32(6)..be16(1)..be16(#chunks)..be16(ppq)..table.concat(chunks); if write_file(fn,smf) then local chk=read_file(fn); if chk and #chk==#smf and chk:sub(1,4)=="MThd" then update_status="MIDI gespeichert: "..fn.." ("..tostring(#valid).." Spur(en), "..tostring(#smf).." Bytes)" else update_status="MIDI-Datei konnte nach dem Schreiben nicht verifiziert werden: "..fn end else update_status="MIDI konnte nicht gespeichert werden: "..fn end
 end
 local function first_text_field(raw) local ts,te=(raw or ""):find('"text"%s*:'); if not ts then return nil end; local q=raw:find('"',te+1,true); return q and read_json_string(raw,q) or nil end
 local function run_ai(prompt,key)
@@ -234,7 +242,7 @@ local function ai_poll(a)
 end
 local function launch(stage,prompt,key,data) local a,e=ai_command(prompt,key); if not a then add("KI",e); busy=false; job=nil; return false end; job={stage=stage,ai=a,key=key,data=data or {}}; return true end
 local function begin_process(request)
- last_diag={version=VERSION,provider=provider,model=model,request=request}; local key=get_key(); if not key then add("KI","Kein API-Key für "..provider_name().." verfügbar."); busy=false; return end
+ last_diag={version=VERSION,provider=provider,model=model,request=request}; persist_diag(); write_file(DIAG_CACHE_PATH,diag_json()); local key=get_key(); if not key then add("KI","Kein API-Key für "..provider_name().." verfügbar."); busy=false; return end
  local items=selected_items(false); local tracks=selected_tracks(); diag_set("context",compact_context(items,tracks,false)); local prompt=CONTROLLER.."\n\nBISHERIGER DIALOG:\n"..recent_dialog().."\n\nAKTUELLER AUFTRAG:\n"..request.."\n\nKOMPAKTER REAPER-KONTEXT:\n"..compact_context(items,tracks,false); diag_set("controller_prompt",prompt); launch("controller",prompt,key,{request=request,items=items,tracks=tracks})
 end
 local function summary_prompt(request,comp,made)
@@ -253,7 +261,7 @@ local function poll_job()
  elseif stage=="musical_draft" then
   diag_set("musical_draft",text); data.draft=text; local tp=midi_translation_prompt(data.request,text); diag_set("translation_prompt",tp); launch("composition",tp,key,data); return
  elseif stage=="composition" then
-  diag_set("composition_answer",text); local made,ae=apply_composition(text,data.full,data.music_tracks); diag_set("apply_result",made and ("created_items="..tostring(#made)) or ("ERROR: "..tostring(ae))); if not made then add("KI","Die musikalische Antwort konnte nicht sicher angewendet werden: "..tostring(ae)); busy=false; return end; local htr,hsl=initialize_halion_project(); diag_set("halion_result",string.format("auto_initialized_tracks=%d slots=%d",htr,hsl)); data.comp=text; data.made=made; last_made=made; launch("summary",summary_prompt(data.request,text,made),key,data); return
+  diag_set("composition_answer",text); local made,ae=apply_composition(text,data.full,data.music_tracks); diag_set("apply_result",made and ("created_items="..tostring(#made)) or ("ERROR: "..tostring(ae))); if not made then add("KI","Die musikalische Antwort konnte nicht sicher angewendet werden: "..tostring(ae)); busy=false; return end; local htr,hsl=initialize_halion_project(); diag_set("halion_result",string.format("auto_initialized_tracks=%d slots=%d",htr,hsl)); data.comp=text; data.made=made; last_made=made; local gs={}; for _,it in ipairs(made) do gs[#gs+1]=item_guid(it) end; reaper.SetProjExtState(0,EXT_SECTION,"LastMadeGUIDs",table.concat(gs,"\n")); persist_diag(); write_file(DIAG_CACHE_PATH,diag_json()); launch("summary",summary_prompt(data.request,text,made),key,data); return
  elseif stage=="summary" then add("KI",text); busy=false; return end
 end
 local function submit() local r=trim(input); if r=="" or busy then return end; input=""; info_visible=false; history_mode=false; add("Du",r); busy=true; begin_process(r) end
