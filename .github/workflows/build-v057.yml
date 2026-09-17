@@ -1,0 +1,54 @@
+name: Build Composition Studio v0.5.7
+on:
+  push:
+    paths: ['.github/workflows/build-v057.yml']
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: composition-studio
+          fetch-depth: 0
+      - name: Restore stable v0.5.5 core and make safe recovery release
+        run: |
+          git show c8295b6c63ae46a7591b91e8715e3e423ef54acd:'Composition Studio.lua' > /tmp/stable.lua
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/stable.lua'); s=p.read_text()
+          s=s.replace('-- @version 0.5.5','-- @version 0.5.7',1).replace('local VERSION="0.5.5"','local VERSION="0.5.7"',1)
+          # Remove the unreliable JS dependency and do not invoke AppleScript from REAPER's UI loop.
+          a=s.index('local function save_path_dialog(')
+          b=s.index('local function be16(',a)
+          safe='''local function save_diagnosis()\n local base=reaper.GetResourcePath().."/Composition-Studio-Diagnose-"..os.date("%Y%m%d-%H%M%S")..".json"\n if write_file(base,diag_json()) then update_status="Diagnose gespeichert: "..base else update_status="Diagnose konnte nicht gespeichert werden." end\nend\n'''
+          s=s[:a]+safe+s[b:]
+          # Replace only export dialog acquisition; direct SMF writer remains unchanged.
+          old=''' if type(reaper.JS_Dialog_BrowseForSaveFile)~="function" then update_status="Speichern-Dialog benötigt JS_ReaScriptAPI."; return end\n local valid={}'''
+          s=s.replace(old,''' local valid={}''',1)
+          old2=''' local fn=save_path_dialog("MIDI exportieren","Composition-Studio-"..os.date("%Y%m%d-%H%M%S")..".mid","mid"); if not fn then return end'''
+          new2=''' local fn=reaper.GetResourcePath().."/Composition-Studio-"..os.date("%Y%m%d-%H%M%S")..".mid"'''
+          if old2 not in s: raise SystemExit('MIDI dialog line not found')
+          s=s.replace(old2,new2,1)
+          p.write_text(s)
+          PY
+          cp /tmp/stable.lua 'Composition Studio.lua'
+      - name: Lua syntax check
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lua5.4 && luac5.4 -p 'Composition Studio.lua'
+      - name: Verify recovery
+        run: |
+          grep -F -- '-- @version 0.5.7' 'Composition Studio.lua'
+          grep -F 'local VERSION="0.5.7"' 'Composition Studio.lua'
+          ! grep -q 'JS_Dialog_BrowseForSaveFile' 'Composition Studio.lua'
+          ! grep -q 'osascript' 'Composition Studio.lua'
+          grep -F 'local function midi_translation_prompt' 'Composition Studio.lua'
+          grep -F 'musical_draft' 'Composition Studio.lua'
+          grep -F 'local smf="MThd"' 'Composition Studio.lua'
+      - name: Commit
+        run: |
+          git config user.name 'wibem1'
+          git config user.email 'wibem1@googlemail.com'
+          git add 'Composition Studio.lua'
+          git commit -m 'Composition Studio v0.5.7: recover stable composition core and remove blocking save dialogs'
+          git push origin HEAD:composition-studio
