@@ -1,4 +1,4 @@
-name: Composition Studio v0.5.1 upgrade
+name: Composition Studio v0.5.1 updater bridge
 on:
   push:
     branches: [composition-studio]
@@ -6,29 +6,36 @@ on:
 permissions:
   contents: write
 jobs:
-  upgrade:
+  bridge:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: composition-studio
-      - name: Build v0.5.1
-        run: python .github/v051_builder.py
+      - name: Make v0.5.1 visible to legacy updater
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('Composition Studio.lua')
+          s=p.read_text()
+          assert '-- @version 0.5.1' in s
+          assert 'local VERSION="0.5.1"' in s
+          s=s.replace('-- @version 0.5.1','-- @version 0.5-test1',1)
+          p.write_text(s)
+          PY
       - name: Lua syntax check
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq lua5.4
           luac5.4 -p 'Composition Studio.lua'
-      - name: Verify v0.5.1
+      - name: Verify updater bridge
         run: |
+          grep -q '^-- @version 0.5-test1$' 'Composition Studio.lua'
           grep -q 'local VERSION="0.5.1"' 'Composition Studio.lua'
-          grep -q 'claude-fable-5' 'Composition Studio.lua'
-          grep -q 'gemini-3.8-flash' 'Composition Studio.lua'
-          grep -q 'gpt-5.6-sol' 'Composition Studio.lua'
-      - name: Commit v0.5.1
+      - name: Commit updater bridge
         run: |
           git config user.name "Composition Studio Builder"
           git config user.email "actions@users.noreply.github.com"
           git add 'Composition Studio.lua'
-          git commit -m 'Composition Studio v0.5.1 multi-provider model selection'
+          git commit -m 'Fix legacy updater path to v0.5.1'
           git push origin composition-studio
