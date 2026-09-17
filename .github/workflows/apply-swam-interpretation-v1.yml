@@ -1,4 +1,5 @@
 name: Apply SWAM interpretation v1
+# trigger migration
 on:
   push:
     branches: [composition-studio]
