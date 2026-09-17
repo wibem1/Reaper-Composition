@@ -1,12 +1,51 @@
 -- @description Composition Studio
--- @version 0.2-test12
+-- @version 0.2-test13
 -- @author Klangwerke
 -- @about Dockable AI chat and direct MIDI composition in REAPER.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.2-test12"
+local VERSION="0.2-test13"
 local EXT_SECTION,EXT_KEY="CompositionStudio","OpenAIAPIKey"
 local WINDOW_STATE_KEY="WindowOpen"
+
+-- Einmalige, automatische Startup-Einrichtung.
+-- REAPER führt Scripts/__startup.lua beim Programmstart automatisch aus.
+-- Wir ergänzen dort nur einen klar markierten Composition-Studio-Block und
+-- lassen eventuell vorhandenen Inhalt unangetastet.
+local function ensure_native_startup_hook()
+  local startup_path=reaper.GetResourcePath().."/Scripts/__startup.lua"
+  local begin_marker="-- BEGIN COMPOSITION STUDIO AUTO START"
+  local end_marker="-- END COMPOSITION STUDIO AUTO START"
+  local existing=""
+  local f=io.open(startup_path,"rb")
+  if f then existing=f:read("*a") or ""; f:close() end
+  if existing:find(begin_marker,1,true) then return true end
+
+  local block=[[
+-- BEGIN COMPOSITION STUDIO AUTO START
+-- Dieser Block wurde von Composition Studio angelegt.
+do
+  if reaper.GetExtState("CompositionStudio","WindowOpen")=="1" then
+    local p=reaper.GetResourcePath().."/Scripts/Composition Studio/Composition Studio.lua"
+    local f=io.open(p,"rb")
+    if f then
+      f:close()
+      local ok,err=pcall(dofile,p)
+      if not ok then reaper.ShowConsoleMsg("Composition Studio Autostart: "..tostring(err).."\n") end
+    end
+  end
+end
+-- END COMPOSITION STUDIO AUTO START
+]]
+  local out=existing
+  if out~="" and out:sub(-1)~="\n" then out=out.."\n" end
+  out=out..block
+  local w=io.open(startup_path,"wb")
+  if not w then return false end
+  w:write(out); w:close(); return true
+end
+
+ensure_native_startup_hook()
 
 if type(reaper.ImGui_CreateContext)~="function" then
   reaper.ShowMessageBox("Composition Studio benötigt ReaImGui.",SCRIPT_NAME,0)
