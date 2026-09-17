@@ -1,0 +1,41 @@
+from pathlib import Path
+p=Path('Composition Studio.lua')
+s=p.read_text()
+assert 'local VERSION="0.4-test4"' in s
+s=s.replace('-- @version 0.4-test4','-- @version 0.5.1',1).replace('local VERSION="0.4-test4"','local VERSION="0.5.1"',1)
+s=s.replace('local EXT_SECTION,EXT_KEY="CompositionStudio","OpenAIAPIKey"','local EXT_SECTION="CompositionStudio"\nlocal PROVIDER_KEY,MODEL_KEY="AIProvider","AIModel"\nlocal KEY_NAMES={openai="OpenAIAPIKey",anthropic="AnthropicAPIKey",google="GoogleAPIKey"}\nlocal MODELS={openai={{"GPT-5.6 Sol","gpt-5.6-sol"},{"GPT-5.6 Terra","gpt-5.6-terra"},{"GPT-5.6 Luna","gpt-5.6-luna"}},anthropic={{"Claude Fable 5","claude-fable-5"},{"Claude Sonnet 5","claude-sonnet-5"},{"Claude Opus 5","claude-opus-5"}},google={{"Gemini 3.8 Flash","gemini-3.8-flash"},{"Gemini 3.1 Pro","gemini-3.1-pro-preview"},{"Gemini 2.5 Pro","gemini-2.5-pro"}}}\nlocal provider=reaper.GetExtState(EXT_SECTION,PROVIDER_KEY); if provider=="" or not MODELS[provider] then provider="openai" end\nlocal model=reaper.GetExtState(EXT_SECTION,MODEL_KEY); if model=="" then model=MODELS[provider][1][2] end',1)
+old='local function version_parts(v) local a,b,t=v:match("^(%d+)%.(%d+)%-test(%d+)$"); return tonumber(a),tonumber(b),tonumber(t) end\nlocal function version_is_newer(r,l) local a,b,c=version_parts(r); local x,y,z=version_parts(l); if not(a and x) then return false end; if a~=x then return a>x end; if b~=y then return b>y end; return c>z end'
+new='local function version_parts(v) local a,b,c=v:match("^(%d+)%.(%d+)%.(%d+)$"); if a then return tonumber(a),tonumber(b),tonumber(c) end; local x,y,t=v:match("^(%d+)%.(%d+)%-test(%d+)$"); return tonumber(x),tonumber(y),tonumber(t) end\nlocal function version_is_newer(r,l) local a,b,c=version_parts(r); local x,y,z=version_parts(l); if not(a and x) then return false end; if a~=x then return a>x end; if b~=y then return b>y end; return c>z end'
+assert old in s
+s=s.replace(old,new,1)
+a=s.index('local function get_key()'); b=s.index('local function diag_set',a)
+keys='''local function provider_name() return provider=="openai" and "OpenAI" or provider=="anthropic" and "Anthropic" or "Google" end
+local function model_label() for _,m in ipairs(MODELS[provider] or {}) do if m[2]==model then return m[1] end end return model end
+local function select_model(pv,id) provider=pv; model=id; reaper.SetExtState(EXT_SECTION,PROVIDER_KEY,provider,true); reaper.SetExtState(EXT_SECTION,MODEL_KEY,model,true) end
+local function get_key() local kn=KEY_NAMES[provider]; local k=trim(reaper.GetExtState(EXT_SECTION,kn)); if k~="" then return k end; local ok,v=reaper.GetUserInputs("Studio – KI-Zugang",1,provider_name().." API-Key:,extrawidth=320",""); if not ok then return nil end; k=trim(v); if k~="" then reaper.SetExtState(EXT_SECTION,kn,k,true); return k end end
+local function edit_key(pv) local kn=KEY_NAMES[pv]; local old=reaper.GetExtState(EXT_SECTION,kn); local name=pv=="openai" and "OpenAI" or pv=="anthropic" and "Anthropic" or "Google"; local ok,v=reaper.GetUserInputs("Studio – KI-Zugang",1,name.." API-Key:,extrawidth=320",old or ""); if ok then reaper.SetExtState(EXT_SECTION,kn,trim(v),true) end end
+'''
+s=s[:a]+keys+s[b:]
+a=s.index('local function run_openai('); b=s.index('local function enc(',a)
+ai='''local function first_text_field(raw) local ts,te=(raw or ""):find('"text"%s*:'); if not ts then return nil end; local q=raw:find('"',te+1,true); return q and read_json_string(raw,q) or nil end
+local function run_ai(prompt,key)
+ local base=os.tmpname(); local rq,rs,cd=base..".json",base..".out",base..".code"; local body,url,headers
+ if provider=="openai" then body='{"model":"'..json_escape(model)..'","input":"'..json_escape(prompt)..'"}'; url="https://api.openai.com/v1/responses"; headers="-H "..shell_quote("Authorization: Bearer "..key).." -H 'Content-Type: application/json'"
+ elseif provider=="anthropic" then body='{"model":"'..json_escape(model)..'","max_tokens":16000,"messages":[{"role":"user","content":"'..json_escape(prompt)..'"}]}'; url="https://api.anthropic.com/v1/messages"; headers="-H "..shell_quote("x-api-key: "..key).." -H 'anthropic-version: 2023-06-01' -H 'Content-Type: application/json'"
+ else body='{"contents":[{"parts":[{"text":"'..json_escape(prompt)..'"}]}]}'; url="https://generativelanguage.googleapis.com/v1beta/models/"..model..":generateContent?key="..key; headers="-H 'Content-Type: application/json'" end
+ if not write_file(rq,body) then return nil,"Anfrage konnte nicht geschrieben werden." end
+ os.execute("/usr/bin/curl -sS --max-time 180 -o "..shell_quote(rs).." -w '%{http_code}' "..headers.." --data-binary @"..shell_quote(rq).." "..shell_quote(url).." > "..shell_quote(cd))
+ local status=trim(read_file(cd)); local raw=read_file(rs); os.remove(rq); os.remove(rs); os.remove(cd); if status~="200" or not raw then return nil,"KI-Aufruf fehlgeschlagen ("..provider_name()..", HTTP "..tostring(status)..")." end
+ local text=provider=="openai" and response_text(raw) or first_text_field(raw); if not text or trim(text)=="" then return nil,"KI-Antwort konnte nicht gelesen werden ("..provider_name()..")." end; return text,nil
+end
+'''
+s=s[:a]+ai+s[b:]
+s=s.replace('local keys={"version","request"','local keys={"version","provider","model","request"',1)
+s=s.replace('local function process(request) last_diag={version=VERSION,request=request}; local key=get_key(); if not key then add("KI","Kein OpenAI API-Key verfügbar."); return end;','local function process(request) last_diag={version=VERSION,provider=provider,model=model,request=request}; local key=get_key(); if not key then add("KI","Kein API-Key für "..provider_name().." verfügbar."); return end;',1)
+s=s.replace('run_openai(', 'run_ai(')
+old_ui='reaper.ImGui_Text(ctx,SCRIPT_NAME.."  "..VERSION); reaper.ImGui_SameLine(ctx); if reaper.ImGui_Button(ctx,"Info") then info_visible=true; history_mode=false end; reaper.ImGui_SameLine(ctx); if reaper.ImGui_Button(ctx,"Diagnose") then save_diagnosis() end; reaper.ImGui_SameLine(ctx); if reaper.ImGui_Button(ctx,"Update") then install_update() end; reaper.ImGui_Text(ctx,string.format("GPT-5.6  |  %d MIDI-Item(s) | %d Spur(en) ausgewählt",#items,#tracks));'
+new_ui='reaper.ImGui_Text(ctx,"Studio v"..VERSION); reaper.ImGui_SameLine(ctx); if reaper.ImGui_Button(ctx,"...") then reaper.ImGui_OpenPopup(ctx,"##studio_menu") end; if reaper.ImGui_BeginPopup(ctx,"##studio_menu") then if reaper.ImGui_MenuItem(ctx,"Info") then info_visible=true; history_mode=false end; if reaper.ImGui_MenuItem(ctx,"Diagnose speichern") then save_diagnosis() end; if reaper.ImGui_MenuItem(ctx,"Update") then install_update() end; reaper.ImGui_Separator(ctx); if reaper.ImGui_MenuItem(ctx,"OpenAI API-Key ...") then edit_key("openai") end; if reaper.ImGui_MenuItem(ctx,"Anthropic API-Key ...") then edit_key("anthropic") end; if reaper.ImGui_MenuItem(ctx,"Google API-Key ...") then edit_key("google") end; reaper.ImGui_EndPopup(ctx) end; if reaper.ImGui_Button(ctx,model_label().." v") then reaper.ImGui_OpenPopup(ctx,"##model_menu") end; if reaper.ImGui_BeginPopup(ctx,"##model_menu") then for _,pv in ipairs({"openai","anthropic","google"}) do local title=pv=="openai" and "OpenAI" or pv=="anthropic" and "Anthropic" or "Google"; reaper.ImGui_Text(ctx,title); for _,m in ipairs(MODELS[pv]) do if reaper.ImGui_MenuItem(ctx,m[1],nil,provider==pv and model==m[2]) then select_model(pv,m[2]) end end; if pv~="google" then reaper.ImGui_Separator(ctx) end end; reaper.ImGui_EndPopup(ctx) end; reaper.ImGui_SameLine(ctx); reaper.ImGui_Text(ctx,string.format("%d MIDI | %d Spur(en)",#items,#tracks));'
+assert old_ui in s
+s=s.replace(old_ui,new_ui,1)
+s=s.replace('if changed then input=wrap_text(v,58) end','if changed then local lim=math.max(18,math.floor((w-18)/9.5)); input=wrap_text(v,lim) end',1)
+p.write_text(s)
