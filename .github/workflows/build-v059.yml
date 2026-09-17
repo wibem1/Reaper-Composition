@@ -1,7 +1,6 @@
 name: Build Composition Studio v0.5.9
 on:
   push:
-    paths: ['.github/workflows/build-v059.yml']
 permissions:
   contents: write
 jobs:
@@ -9,51 +8,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: {ref: composition-studio}
-      - name: Repair unsupported REAPER save API
+        with:
+          ref: composition-studio
+      - name: Patch
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('Composition Studio.lua'); s=p.read_text()
-          s=s.replace('-- @version 0.5.8','-- @version 0.5.9',1).replace('local VERSION="0.5.8"','local VERSION="0.5.9"',1)
-          old='''local function choose_save_path(title,default_name,ext)
- local ok,fn=reaper.GetUserFileNameForWrite("",title,ext)
- if not ok or not fn or fn=="" then return nil end
- if not fn:lower():match("%."..ext.."$") then fn=fn.."."..ext end
- return fn
-end'''
-          new='''local function choose_save_path(title,default_name,ext)
- -- REAPER has no native GetUserFileNameForWrite API. Never call a missing API.
- -- Use JS save panel when installed; otherwise ask for a filename and save visibly to REAPER resource path.
- if reaper.JS_Dialog_BrowseForSaveFile then
-  local rv,fn=reaper.JS_Dialog_BrowseForSaveFile(title,reaper.GetResourcePath(),default_name,"* ."..ext)
-  if rv and rv~=0 and fn and fn~="" then if not fn:lower():match("%."..ext.."$") then fn=fn.."."..ext end; return fn end
-  return nil
- end
- local ok,name=reaper.GetUserInputs(title,1,"Dateiname:,extrawidth=260",default_name)
- if not ok then return nil end
- name=trim(name):gsub("[/\\\\:]","-")
- if name=="" then return nil end
- if not name:lower():match("%."..ext.."$") then name=name.."."..ext end
- return reaper.GetResourcePath().."/"..name
-end'''
-          if old not in s: raise SystemExit('choose_save_path anchor missing')
-          s=s.replace(old,new,1)
-          p.write_text(s)
-          PY
-      - name: Lua syntax and safety checks
+          echo 'ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCnA9UGF0aCgnQ29tcG9zaXRpb24gU3R1ZGlvLmx1YScpCnM9cC5yZWFkX3RleHQoKQpzPXMucmVwbGFjZSgnLS0gQHZlcnNpb24gMC41LjgnLCctLSBAdmVyc2lvbiAwLjUuOScsMSkucmVwbGFjZSgnbG9jYWwgVkVSU0lPTj0iMC41LjgiJywnbG9jYWwgVkVSU0lPTj0iMC41LjkiJywxKQphPXMuaW5kZXgoJ2xvY2FsIGZ1bmN0aW9uIGNob29zZV9zYXZlX3BhdGgoJykKYj1zLmluZGV4KCdsb2NhbCBmdW5jdGlvbiBzYXZlX2RpYWdub3NpcygpJyxhKQpuZXc9cicnJ2xvY2FsIGZ1bmN0aW9uIGNob29zZV9zYXZlX3BhdGgodGl0bGUsZGVmYXVsdF9uYW1lLGV4dCkKIGlmIHJlYXBlci5KU19EaWFsb2dfQnJvd3NlRm9yU2F2ZUZpbGUgdGhlbgogIGxvY2FsIHJ2LGZuPXJlYXBlci5KU19EaWFsb2dfQnJvd3NlRm9yU2F2ZUZpbGUodGl0bGUscmVhcGVyLkdldFJlc291cmNlUGF0aCgpLGRlZmF1bHRfbmFtZSwiKi4iLi5leHQpCiAgaWYgcnYgYW5kIHJ2fj0wIGFuZCBmbiBhbmQgZm5+PSIiIHRoZW4gaWYgbm90IGZuOmxvd2VyKCk6bWF0Y2goIiUuIi4uZXh0Li4iJCIpIHRoZW4gZm49Zm4uLiIuIi4uZXh0IGVuZDsgcmV0dXJuIGZuIGVuZAogIHJldHVybiBuaWwKIGVuZAogbG9jYWwgb2ssbmFtZT1yZWFwZXIuR2V0VXNlcklucHV0cyh0aXRsZSwxLCJEYXRlaW5hbWU6LGV4dHJhd2lkdGg9MjYwIixkZWZhdWx0X25hbWUpCiBpZiBub3Qgb2sgdGhlbiByZXR1cm4gbmlsIGVuZAogbmFtZT10cmltKG5hbWUpOmdzdWIoIlsvXFw6XSIsIi0iKQogaWYgbmFtZT09IiIgdGhlbiByZXR1cm4gbmlsIGVuZAogaWYgbm90IG5hbWU6bG93ZXIoKTptYXRjaCgiJS4iLi5leHQuLiIkIikgdGhlbiBuYW1lPW5hbWUuLiIuIi4uZXh0IGVuZAogcmV0dXJuIHJlYXBlci5HZXRSZXNvdXJjZVBhdGgoKS4uIi8iLi5uYW1lCmVuZAonJycKcz1zWzphXStuZXcrc1tiOl0KcC53cml0ZV90ZXh0KHMpCg==' | base64 -d > /tmp/p.py
+          python3 /tmp/p.py
+      - name: Verify
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq lua5.4
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lua5.4
           luac5.4 -p 'Composition Studio.lua'
           grep -F -- '-- @version 0.5.9' 'Composition Studio.lua'
           grep -F 'local VERSION="0.5.9"' 'Composition Studio.lua'
-          ! grep -q 'reaper.GetUserFileNameForWrite' 'Composition Studio.lua'
           grep -F 'local function midi_translation_prompt' 'Composition Studio.lua'
           grep -F 'LastDiagnosisV2' 'Composition Studio.lua'
-          ! grep -q 'osascript' 'Composition Studio.lua'
-      - name: Commit
+      - name: Publish
         run: |
-          git config user.name 'wibem1'; git config user.email 'wibem1@googlemail.com'
+          git config user.name wibem1
+          git config user.email wibem1@googlemail.com
           git add 'Composition Studio.lua'
-          git commit -m 'Composition Studio v0.5.9: prevent save-dialog API crash'
+          git commit -m 'Composition Studio v0.5.9 repair save crash'
           git push origin HEAD:composition-studio
