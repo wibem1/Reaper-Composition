@@ -1,5 +1,5 @@
 -- @description Composition Studio
--- @version 0.5.1
+-- @version 0.5-test1
 -- @author Klangwerke
 -- @about Dockable AI chat, controlled REAPER actions and MIDI composition.
 
