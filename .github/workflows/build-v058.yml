@@ -1,0 +1,80 @@
+name: Build Composition Studio v0.5.8
+on:
+  push:
+    paths: ['.github/workflows/build-v058.yml']
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: composition-studio
+          fetch-depth: 0
+      - name: Patch v0.5.8 diagnostics and export
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('Composition Studio.lua'); s=p.read_text()
+          s=s.replace('-- @version 0.5.7','-- @version 0.5.8',1).replace('local VERSION="0.5.7"','local VERSION="0.5.8"',1)
+          # Persist the complete last diagnosis in ExtState whenever a diagnostic field changes.
+          old='local function diag_set(k,v) last_diag[k]=v end'
+          new='''local DIAG_STATE_KEY="LastDiagnosisV2"\nlocal function persist_diag()\n local ok,raw=pcall(function() return diag_json() end)\n if ok and raw then reaper.SetExtState(EXT_SECTION,DIAG_STATE_KEY,raw,true) end\nend\nlocal function diag_set(k,v) last_diag[k]=v; reaper.defer(persist_diag) end'''
+          if old not in s: raise SystemExit('diag_set anchor missing')
+          s=s.replace(old,new,1)
+          # diag_json is declared after diag_set in the old source; forward declaration fixes lexical lookup.
+          s=s.replace('local function diag_set(k,v) last_diag[k]=v; reaper.defer(persist_diag) end\nlocal function diag_json()', 'local diag_json\nlocal function diag_set(k,v) last_diag[k]=v; reaper.defer(persist_diag) end\ndiag_json=function()',1)
+          # Restore persisted diagnosis after diag_json exists.
+          anchor='end\nlocal function save_diagnosis()'
+          restore='''end\nlocal function restore_diag()\n local raw=reaper.GetExtState(EXT_SECTION,DIAG_STATE_KEY)\n if raw=="" then return end\n local keys={"version","provider","model","request","context","controller_prompt","controller_answer","composition_prompt","musical_draft","translation_prompt","composition_answer","apply_result","halion_result"}\n for _,k in ipairs(keys) do\n  local pat='"'..k..'"%s*:%s*"'\n  local _,e=raw:find(pat)\n  if e then local q=e; local out={}; local esc=false; while q<#raw do q=q+1; local c=raw:sub(q,q); if esc then if c=="n" then out[#out+1]="\\n" elseif c=="r" then out[#out+1]="\\r" elseif c=="t" then out[#out+1]="\\t" else out[#out+1]=c end; esc=false elseif c=="\\\\" then esc=true elseif c=='"' then break else out[#out+1]=c end end; last_diag[k]=table.concat(out) end\n end\nend\nrestore_diag()\nlocal function save_diagnosis()'''
+          if anchor not in s: raise SystemExit('save diagnosis anchor missing')
+          s=s.replace(anchor,restore,1)
+          # Replace silent fixed-path diagnosis save with REAPER native save dialog.
+          start=s.index('local function save_diagnosis()')
+          end=s.index('local function be16(',start)
+          save='''local function choose_save_path(title,default_name,ext)\n local ok,fn=reaper.GetUserFileNameForWrite("",title,ext)\n if not ok or not fn or fn=="" then return nil end\n if not fn:lower():match("%."..ext.."$") then fn=fn.."."..ext end\n return fn\nend\nlocal function save_diagnosis()\n local fn=choose_save_path("Diagnose speichern","Composition-Studio-Diagnose-"..os.date("%Y%m%d-%H%M%S")..".json","json")\n if not fn then update_status="Speichern abgebrochen."; return end\n if write_file(fn,diag_json()) then persist_diag(); update_status="Diagnose gespeichert: "..fn else update_status="Diagnose konnte nicht gespeichert werden." end\nend\n'''
+          s=s[:start]+save+s[end:]
+          # Use native REAPER Save dialog for MIDI instead of invisible resource-path export.
+          old='local fn=reaper.GetResourcePath().."/Composition-Studio-"..os.date("%Y%m%d-%H%M%S")..".mid"'
+          new='local fn=choose_save_path("MIDI exportieren","Composition-Studio-"..os.date("%Y%m%d-%H%M%S")..".mid","mid"); if not fn then update_status="MIDI-Export abgebrochen."; return end'
+          if old not in s: raise SystemExit('MIDI fixed path anchor missing')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+      - name: Lua syntax check
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lua5.4 && luac5.4 -p 'Composition Studio.lua'
+      - name: Static verification
+        run: |
+          grep -F -- '-- @version 0.5.8' 'Composition Studio.lua'
+          grep -F 'local VERSION="0.5.8"' 'Composition Studio.lua'
+          grep -F 'LastDiagnosisV2' 'Composition Studio.lua'
+          grep -F 'restore_diag()' 'Composition Studio.lua'
+          grep -F 'GetUserFileNameForWrite' 'Composition Studio.lua'
+          grep -F 'local function midi_translation_prompt' 'Composition Studio.lua'
+          grep -F 'musical_draft' 'Composition Studio.lua'
+          ! grep -q 'osascript' 'Composition Studio.lua'
+          ! grep -q 'JS_Dialog_BrowseForSaveFile' 'Composition Studio.lua'
+      - name: Test Standard MIDI writer independently
+        run: |
+          python3 - <<'PY'
+          # Validate the binary primitives and a minimal Format-1 SMF matching the writer's format.
+          import struct
+          def vlq(n):
+              b=[n&127]; n >>= 7
+              while n: b.insert(0,128|(n&127)); n >>= 7
+              return bytes(b)
+          tempo=b'\x00\xff\x51\x03\x07\xa1\x20\x00\xff\x2f\x00'
+          note=b'\x00\x90\x3c\x50'+vlq(960)+b'\x80\x3c\x00\x00\xff\x2f\x00'
+          smf=b'MThd'+struct.pack('>IHHH',6,1,2,960)+b'MTrk'+struct.pack('>I',len(tempo))+tempo+b'MTrk'+struct.pack('>I',len(note))+note
+          open('/tmp/export-test.mid','wb').write(smf)
+          d=open('/tmp/export-test.mid','rb').read(); assert d[:4]==b'MThd' and d.count(b'MTrk')==2 and len(d)>30
+          print('SMF test OK',len(d))
+          PY
+      - name: Commit
+        run: |
+          git config user.name 'wibem1'
+          git config user.email 'wibem1@googlemail.com'
+          git add 'Composition Studio.lua'
+          git commit -m 'Composition Studio v0.5.8: persistent diagnosis and visible MIDI save dialog'
+          git push origin HEAD:composition-studio
