@@ -1,10 +1,10 @@
 -- @description Composition Studio
--- @version 0.5.7
+-- @version 0.5.8
 -- @author Klangwerke
 -- @about Dockable AI chat, controlled REAPER actions and MIDI composition.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.5.7"
+local VERSION="0.5.8"
 local EXT_SECTION="CompositionStudio"
 local PROVIDER_KEY,MODEL_KEY="AIProvider","AIModel"
 local KEY_NAMES={openai="OpenAIAPIKey",anthropic="AnthropicAPIKey",google="GoogleAPIKey"}
@@ -68,14 +68,38 @@ local function model_label() for _,m in ipairs(MODELS[provider] or {}) do if m[2
 local function select_model(pv,id) provider=pv; model=id; reaper.SetExtState(EXT_SECTION,PROVIDER_KEY,provider,true); reaper.SetExtState(EXT_SECTION,MODEL_KEY,model,true) end
 local function get_key() local kn=KEY_NAMES[provider]; local k=trim(reaper.GetExtState(EXT_SECTION,kn)); if k~="" then return k end; local ok,v=reaper.GetUserInputs("Studio – KI-Zugang",1,provider_name().." API-Key:,extrawidth=320",""); if not ok then return nil end; k=trim(v); if k~="" then reaper.SetExtState(EXT_SECTION,kn,k,true); return k end end
 local function edit_key(pv) local kn=KEY_NAMES[pv]; local old=reaper.GetExtState(EXT_SECTION,kn); local name=pv=="openai" and "OpenAI" or pv=="anthropic" and "Anthropic" or "Google"; local ok,v=reaper.GetUserInputs("Studio – KI-Zugang",1,name.." API-Key:,extrawidth=320",old or ""); if ok then reaper.SetExtState(EXT_SECTION,kn,trim(v),true) end end
-local function diag_set(k,v) last_diag[k]=v end
-local function diag_json()
+local DIAG_STATE_KEY="LastDiagnosisV2"
+local function persist_diag()
+ local ok,raw=pcall(function() return diag_json() end)
+ if ok and raw then reaper.SetExtState(EXT_SECTION,DIAG_STATE_KEY,raw,true) end
+end
+local diag_json
+local function diag_set(k,v) last_diag[k]=v; reaper.defer(persist_diag) end
+diag_json=function()
  local keys={"version","provider","model","request","context","controller_prompt","controller_answer","composition_prompt","musical_draft","translation_prompt","composition_answer","apply_result","halion_result"}; local a={"{\n  \"timestamp\": \""..json_escape(os.date("%Y-%m-%dT%H:%M:%S")).."\""}
  for _,k in ipairs(keys) do a[#a+1]=",\n  \""..k.."\": \""..json_escape(last_diag[k] or "").."\"" end; a[#a+1]="\n}\n"; return table.concat(a)
 end
+local function restore_diag()
+ local raw=reaper.GetExtState(EXT_SECTION,DIAG_STATE_KEY)
+ if raw=="" then return end
+ local keys={"version","provider","model","request","context","controller_prompt","controller_answer","composition_prompt","musical_draft","translation_prompt","composition_answer","apply_result","halion_result"}
+ for _,k in ipairs(keys) do
+  local pat='"'..k..'"%s*:%s*"'
+  local _,e=raw:find(pat)
+  if e then local q=e; local out={}; local esc=false; while q<#raw do q=q+1; local c=raw:sub(q,q); if esc then if c=="n" then out[#out+1]="\n" elseif c=="r" then out[#out+1]="\r" elseif c=="t" then out[#out+1]="\t" else out[#out+1]=c end; esc=false elseif c=="\\" then esc=true elseif c=='"' then break else out[#out+1]=c end end; last_diag[k]=table.concat(out) end
+ end
+end
+restore_diag()
+local function choose_save_path(title,default_name,ext)
+ local ok,fn=reaper.GetUserFileNameForWrite("",title,ext)
+ if not ok or not fn or fn=="" then return nil end
+ if not fn:lower():match("%."..ext.."$") then fn=fn.."."..ext end
+ return fn
+end
 local function save_diagnosis()
- local base=reaper.GetResourcePath().."/Composition-Studio-Diagnose-"..os.date("%Y%m%d-%H%M%S")..".json"
- if write_file(base,diag_json()) then update_status="Diagnose gespeichert: "..base else update_status="Diagnose konnte nicht gespeichert werden." end
+ local fn=choose_save_path("Diagnose speichern","Composition-Studio-Diagnose-"..os.date("%Y%m%d-%H%M%S")..".json","json")
+ if not fn then update_status="Speichern abgebrochen."; return end
+ if write_file(fn,diag_json()) then persist_diag(); update_status="Diagnose gespeichert: "..fn else update_status="Diagnose konnte nicht gespeichert werden." end
 end
 local function be16(n) return string.char(math.floor(n/256)%256,n%256) end
 local function be32(n) return string.char(math.floor(n/16777216)%256,math.floor(n/65536)%256,math.floor(n/256)%256,n%256) end
@@ -93,7 +117,7 @@ end
 local function export_last_midi()
  local valid={}; for _,it in ipairs(last_made) do if it and reaper.ValidatePtr2(0,it,"MediaItem*") then valid[#valid+1]=it end end
  if #valid==0 then update_status="Noch keine gültige von Composition Studio erzeugte Komposition zum Exportieren."; return end
- local fn=reaper.GetResourcePath().."/Composition-Studio-"..os.date("%Y%m%d-%H%M%S")..".mid"
+ local fn=choose_save_path("MIDI exportieren","Composition-Studio-"..os.date("%Y%m%d-%H%M%S")..".mid","mid"); if not fn then update_status="MIDI-Export abgebrochen."; return end
  local ppq=960; local chunks={}; local tempo=math.max(1,reaper.Master_GetTempo()); local us=math.floor(60000000/tempo+0.5); local tempo_data=string.char(0xFF,0x51,0x03,math.floor(us/65536)%256,math.floor(us/256)%256,us%256); chunks[#chunks+1]=midi_track_chunk({{tick=0,order=0,data=tempo_data}},"Tempo")
  for _,item in ipairs(valid) do
   local take=reaper.GetActiveTake(item); if take and reaper.TakeIsMIDI(take) then
