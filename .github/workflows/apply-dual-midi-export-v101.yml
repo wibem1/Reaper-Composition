@@ -1,0 +1,68 @@
+name: Apply dual MIDI export v1.0.1
+on:
+  push:
+    branches: [composition-studio]
+    paths: ['.github/workflows/apply-dual-midi-export-v101.yml']
+permissions:
+  contents: write
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: composition-studio
+      - name: Patch dual export
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('Composition Studio.lua')
+          s=p.read_text()
+          assert '-- @version 1.0.0' in s and 'local VERSION="1.0.0"' in s
+          s=s.replace('-- @version 1.0.0','-- @version 1.0.1',1).replace('local VERSION="1.0.0"','local VERSION="1.0.1"',1)
+          old='local open,input,busy=true,"",false; local last_made={}; local last_diag={};'
+          assert old in s
+          s=s.replace(old,'local open,input,busy=true,"",false; local last_made={}; local swam_last_made={}; local last_diag={};',1)
+          old='write_last_midi_to=function(fn)\n local valid={}; for _,it in ipairs(last_made) do'
+          assert old in s
+          s=s.replace(old,'write_last_midi_to=function(fn,items_override)\n local valid={}; for _,it in ipairs(items_override or last_made) do',1)
+          # Save-panel carries the exact MIDI set chosen when the dialog was opened.
+          old='save_panel={kind=kind,script=script,out=out,done=done,ext=ext};'
+          assert old in s
+          s=s.replace(old,'save_panel={kind=kind,script=script,out=out,done=done,ext=ext,items=(kind=="swam_midi") and swam_last_made or nil};',1)
+          # Existing MIDI finish path: add a dedicated SWAM kind without changing diagnosis behavior.
+          old='if p.kind=="diagnosis" then'
+          assert old in s
+          s=s.replace(old,'if p.kind=="swam_midi" then write_last_midi_to(fn,p.items); return end\n if p.kind=="diagnosis" then',1)
+          # SWAM output is stored separately and must never replace the normal composition/export state.
+          old='last_made=made; local gs={}; for _,it in ipairs(made) do gs[#gs+1]=item_guid(it) end; reaper.SetProjExtState(0,EXT_SECTION,"LastMadeGUIDs",table.concat(gs,"\\n")); add("KI","SWAM-Interpretation erzeugt:'
+          assert old in s
+          s=s.replace(old,'swam_last_made=made; add("KI","SWAM-Interpretation erzeugt:',1)
+          # Dedicated export action; normal export remains bound to last_made.
+          marker='local function begin_swam_interpretation()'
+          assert marker in s
+          block='''local function export_swam_midi()\n if busy then return end\n local valid={}; for _,it in ipairs(swam_last_made) do if it and reaper.ValidatePtr2(0,it,"MediaItem*") then valid[#valid+1]=it end end\n if #valid==0 then update_status="Noch keine SWAM-Interpretation zum Exportieren."; return end\n swam_last_made=valid\n local base=work_title~="" and work_title or "Composition Studio"\n begin_save_panel("swam_midi","SWAM-MIDI exportieren",base.." – SWAM.mid","mid")\nend\n'''
+          s=s.replace(marker,block+marker,1)
+          old='if reaper.ImGui_MenuItem(ctx,"SWAM interpretieren") then begin_swam_interpretation() end; if reaper.ImGui_MenuItem(ctx,"MIDI exportieren …") then export_last_midi() end;'
+          assert old in s
+          s=s.replace(old,'if reaper.ImGui_MenuItem(ctx,"SWAM interpretieren") then begin_swam_interpretation() end; if reaper.ImGui_MenuItem(ctx,"MIDI exportieren …") then export_last_midi() end; if reaper.ImGui_MenuItem(ctx,"SWAM-MIDI exportieren …") then export_swam_midi() end;',1)
+          p.write_text(s)
+          PY
+      - name: Syntax and architecture checks
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq lua5.4
+          luac5.4 -p 'Composition Studio.lua'
+          grep -q '@version 1.0.1' 'Composition Studio.lua'
+          grep -q 'local swam_last_made={}' 'Composition Studio.lua'
+          grep -q 'SWAM-MIDI exportieren …' 'Composition Studio.lua'
+          grep -q 'write_last_midi_to(fn,items_override)' 'Composition Studio.lua'
+          grep -q 'swam_last_made=made' 'Composition Studio.lua'
+          if grep -q 'last_made=made; local gs={};.*SWAM-Interpretation erzeugt' 'Composition Studio.lua'; then exit 1; fi
+      - name: Commit migration
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add 'Composition Studio.lua'
+          git commit -m 'Composition Studio 1.0.1: separate normal and SWAM MIDI export'
+          git push origin composition-studio
