@@ -1,0 +1,87 @@
+name: Composition Studio v0.5.1 upgrade
+on:
+  push:
+    branches: [composition-studio]
+    paths: ['.github/workflows/composition-studio-v0.5.1.yml']
+permissions:
+  contents: write
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: composition-studio
+      - name: Build v0.5.1
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          p=Path('Composition Studio.lua')
+          s=p.read_text()
+          assert '-- @version 0.4-test4' in s and 'local VERSION="0.4-test4"' in s
+          s=s.replace('-- @version 0.4-test4','-- @version 0.5.1',1).replace('local VERSION="0.4-test4"','local VERSION="0.5.1"',1)
+          s=s.replace('local EXT_SECTION,EXT_KEY="CompositionStudio","OpenAIAPIKey"','local EXT_SECTION="CompositionStudio"\nlocal KEY_OPENAI,KEY_ANTHROPIC,KEY_GOOGLE="OpenAIAPIKey","AnthropicAPIKey","GoogleAPIKey"\nlocal MODEL_KEY="SelectedModelV1"',1)
+          old='local function version_parts(v) local a,b,t=v:match("^(%d+)%.(%d+)%-test(%d+)$"); return tonumber(a),tonumber(b),tonumber(t) end\nlocal function version_is_newer(r,l) local a,b,c=version_parts(r); local x,y,z=version_parts(l); if not(a and x) then return false end; if a~=x then return a>x end; if b~=y then return b>y end; return c>z end'
+          new='local function version_parts(v) local a,b,c=v:match("^(%d+)%.(%d+)%.(%d+)$"); if a then return tonumber(a),tonumber(b),tonumber(c),1 end; local x,y,t=v:match("^(%d+)%.(%d+)%-test(%d+)$"); if x then return tonumber(x),tonumber(y),tonumber(t),0 end end\nlocal function version_is_newer(r,l) local a,b,c,ak=version_parts(r); local x,y,z,xk=version_parts(l); if not(a and x) then return false end; if a~=x then return a>x end; if b~=y then return b>y end; if (ak or 0)~=(xk or 0) then return (ak or 0)>(xk or 0) end; return c>z end'
+          assert old in s; s=s.replace(old,new,1)
+          # Replace OpenAI-only key/API block with provider-neutral layer.
+          a=s.index('local function response_text(raw,q)')
+          b=s.index('local function diag_set(k,v)',a)
+          api=r'''local function response_text(raw) local s,e=raw:find('"type"%s*:%s*"output_text"'); if not s then return nil end; local ts,te=raw:find('"text"%s*:',e+1); if not ts then return nil end; local q=raw:find('"',te+1,true); return q and read_json_string(raw,q) or nil end
+local MODELS={
+ {provider="OpenAI",label="GPT-5.6 Sol",id="gpt-5.6-sol"},{provider="OpenAI",label="GPT-5.6 Terra",id="gpt-5.6-terra"},{provider="OpenAI",label="GPT-5.6 Luna",id="gpt-5.6-luna"},
+ {provider="Anthropic",label="Claude Fable 5",id="claude-fable-5"},{provider="Anthropic",label="Claude Sonnet 5",id="claude-sonnet-5"},{provider="Anthropic",label="Claude Opus 5",id="claude-opus-5"},
+ {provider="Google",label="Gemini 3.8 Flash",id="gemini-3.8-flash"},{provider="Google",label="Gemini 3.7 Flash",id="gemini-3.7-flash"},{provider="Google",label="Gemini 3.1 Pro",id="gemini-3.1-pro-preview"}
+}
+local selected_model=1; do local saved=reaper.GetExtState(EXT_SECTION,MODEL_KEY); for i,m in ipairs(MODELS) do if saved==m.id then selected_model=i break end end end
+local function model() return MODELS[selected_model] end
+local function key_name(provider) if provider=="OpenAI" then return KEY_OPENAI elseif provider=="Anthropic" then return KEY_ANTHROPIC else return KEY_GOOGLE end end
+local function get_key(provider,ask) local kn=key_name(provider); local k=trim(reaper.GetExtState(EXT_SECTION,kn)); if k~="" or not ask then return k~="" and k or nil end; local ok,v=reaper.GetUserInputs("Composition Studio – "..provider,1,provider.." API-Key:,extrawidth=320",""); if not ok then return nil end; k=trim(v); if k~="" then reaper.SetExtState(EXT_SECTION,kn,k,true); return k end end
+local function set_key(provider) local kn=key_name(provider); local ok,v=reaper.GetUserInputs("Composition Studio – "..provider,1,provider.." API-Key:,extrawidth=320",""); if ok and trim(v)~="" then reaper.SetExtState(EXT_SECTION,kn,trim(v),true); update_status=provider.."-Zugang gespeichert." end end
+local function first_json_text(raw) local ts,te=(raw or ""):find('"text"%s*:'); if not ts then return nil end; local q=raw:find('"',te+1,true); return q and read_json_string(raw,q) or nil end
+local function http_json(url,headers,body) local b=os.tmpname(); local rq,rs,cd=b..".json",b..".out",b..".code"; if not write_file(rq,body) then return nil,"Anfrage konnte nicht geschrieben werden." end; local hs=""; for _,h in ipairs(headers) do hs=hs.." -H "..shell_quote(h) end; os.execute("/usr/bin/curl -sS --max-time 180 -o "..shell_quote(rs).." -w '%{http_code}'"..hs.." -H 'Content-Type: application/json' --data-binary @"..shell_quote(rq).." "..shell_quote(url).." > "..shell_quote(cd)); local status=trim(read_file(cd)); local raw=read_file(rs); os.remove(rq); os.remove(rs); os.remove(cd); if status~="200" or not raw then return nil,"KI-Aufruf fehlgeschlagen (HTTP "..tostring(status)..")." end; return raw end
+local function run_ai(prompt,key) local m=model(); local raw,e; if m.provider=="OpenAI" then raw,e=http_json("https://api.openai.com/v1/responses",{"Authorization: Bearer "..key},'{"model":"'..m.id..'","input":"'..json_escape(prompt)..'"}'); if not raw then return nil,e end; return response_text(raw) or first_json_text(raw),nil elseif m.provider=="Anthropic" then raw,e=http_json("https://api.anthropic.com/v1/messages",{"x-api-key: "..key,"anthropic-version: 2023-06-01"},'{"model":"'..m.id..'","max_tokens":8192,"messages":[{"role":"user","content":"'..json_escape(prompt)..'"}]}'); if not raw then return nil,e end; return first_json_text(raw),nil else raw,e=http_json("https://generativelanguage.googleapis.com/v1beta/models/"..m.id..":generateContent",{"x-goog-api-key: "..key},'{"contents":[{"parts":[{"text":"'..json_escape(prompt)..'"}]}]}'); if not raw then return nil,e end; return first_json_text(raw),nil end end
+'''
+          s=s[:a]+api+s[b:]
+          s=s.replace('local keys={"version","request","context","controller_prompt","controller_answer","composition_prompt","composition_answer","apply_result","halion_result"}','local keys={"version","provider","model","request","context","controller_prompt","controller_answer","composition_prompt","composition_answer","apply_result","halion_result"}',1)
+          # Provider-neutral processing.
+          s=s.replace('local function process(request) last_diag={version=VERSION,request=request}; local key=get_key(); if not key then add("KI","Kein OpenAI API-Key verfügbar."); return end;','local function process(request) local m=model(); last_diag={version=VERSION,provider=m.provider,model=m.id,request=request}; local key=get_key(m.provider,true); if not key then add("KI","Kein "..m.provider.." API-Key verfügbar."); return end;',1)
+          s=s.replace('run_openai(prompt,key)','run_ai(prompt,key)').replace('run_openai(analysis_prompt(request,full,tracks),key)','run_ai(analysis_prompt(request,full,tracks),key)').replace('run_openai(cp,key)','run_ai(cp,key)')
+          # Info text.
+          start=s.index('local function info_text()')
+          end=s.index('local function draw_history()',start)
+          s=s[:start]+'''local function info_text() return "AKTUELLER STAND\\n\\nStudio v"..VERSION.." arbeitet direkt in REAPER.\\n\\n• OpenAI, Anthropic und Google sind über dieselbe Kompositionslogik wählbar.\\n• Provider und Modell werden in der Diagnose gespeichert.\\n• HALion Sonic wird nach MIDI-Erzeugung weiterhin automatisch aus Program Changes initialisiert.\\n• Chat und Eingabe passen den Zeilenumbruch an die verfügbare Breite an." end
+local function clipboard_set(t) if type(reaper.ImGui_SetClipboardText)=="function" then reaper.ImGui_SetClipboardText(ctx,t or "") end end
+local function clipboard_get() if type(reaper.ImGui_GetClipboardText)=="function" then return reaper.ImGui_GetClipboardText(ctx) or "" end return "" end
+local function text_context_menu(id,text,editable) if type(reaper.ImGui_BeginPopupContextItem)~="function" then return text end; if reaper.ImGui_BeginPopupContextItem(ctx,id) then if editable and reaper.ImGui_MenuItem(ctx,"Ausschneiden") then clipboard_set(text); text="" end; if reaper.ImGui_MenuItem(ctx,"Kopieren") then clipboard_set(text) end; if editable and reaper.ImGui_MenuItem(ctx,"Einfügen") then text=text..clipboard_get() end; if editable and reaper.ImGui_MenuItem(ctx,"Alles löschen") then text="" end; reaper.ImGui_EndPopup(ctx) end; return text end
+''' + s[end:]
+          # Replace history renderer: width-sensitive wrapping + context menu.
+          dh0=s.index('local function draw_history()')
+          dh1=s.index('local function remember_closed()',dh0)
+          draw=r'''local function draw_history() if info_visible then reaper.ImGui_TextWrapped(ctx,info_text()); return end; local flags=0; if type(reaper.ImGui_InputTextFlags_ReadOnly)=="function" then flags=flags|reaper.ImGui_InputTextFlags_ReadOnly() end; if type(reaper.ImGui_InputTextFlags_NoHorizontalScroll)=="function" then flags=flags|reaper.ImGui_InputTextFlags_NoHorizontalScroll() end; local avail=select(1,reaper.ImGui_GetContentRegionAvail(ctx)); local limit=math.max(12,math.floor((avail-24)/9.5)); for i=chat_start,#history do local m=history[i]; reaper.ImGui_Text(ctx,m.role..":"); local text=wrap_text(m.text or "",limit); local lines=1; for _ in text:gmatch("\n") do lines=lines+1 end; local height=math.max(48,math.min(260,lines*22+12)); reaper.ImGui_InputTextMultiline(ctx,"##chatmsg"..i,text,-1,height,flags); text_context_menu("##chatmenu"..i,m.text or "",false); reaper.ImGui_Spacing(ctx) end; if history_mode then reaper.ImGui_Separator(ctx); if reaper.ImGui_Button(ctx,"Verlauf löschen") then clear_saved_history() end end end
+'''
+          s=s[:dh0]+draw+s[dh1:]
+          # Replace loop with compact header, model selector, menu, dynamic input wrap.
+          lp=s.index('local function loop()')
+          s=s[:lp]+r'''local function model_selector() local m=model(); if reaper.ImGui_BeginCombo(ctx,"##model",m.label) then local last=""; for i,x in ipairs(MODELS) do if x.provider~=last then if last~="" then reaper.ImGui_Separator(ctx) end; reaper.ImGui_Text(ctx,x.provider); last=x.provider end; if reaper.ImGui_Selectable(ctx,x.label,selected_model==i) then selected_model=i; reaper.SetExtState(EXT_SECTION,MODEL_KEY,x.id,true) end end; reaper.ImGui_EndCombo(ctx) end end
+local function tools_menu() if reaper.ImGui_Button(ctx,"⋯") then reaper.ImGui_OpenPopup(ctx,"##tools") end; if reaper.ImGui_BeginPopup(ctx,"##tools") then if reaper.ImGui_MenuItem(ctx,"Info") then info_visible=true; history_mode=false end; if reaper.ImGui_MenuItem(ctx,"Diagnose") then save_diagnosis() end; if reaper.ImGui_MenuItem(ctx,"Update") then install_update() end; reaper.ImGui_Separator(ctx); if reaper.ImGui_MenuItem(ctx,"OpenAI-Key setzen …") then set_key("OpenAI") end; if reaper.ImGui_MenuItem(ctx,"Anthropic-Key setzen …") then set_key("Anthropic") end; if reaper.ImGui_MenuItem(ctx,"Google-Key setzen …") then set_key("Google") end; reaper.ImGui_EndPopup(ctx) end end
+local function loop() if not open then if not restarting then remember_closed() end; return end; check_project_change(); reaper.ImGui_SetNextWindowSize(ctx,340,620,reaper.ImGui_Cond_FirstUseEver()); local visible; visible,open=reaper.ImGui_Begin(ctx,SCRIPT_NAME.."###CompositionStudioMain",open); if visible then local pushed=push_font(); local items=selected_items(false); local tracks=selected_tracks(); reaper.ImGui_Text(ctx,"Studio v"..VERSION); reaper.ImGui_SameLine(ctx); tools_menu(); model_selector(); reaper.ImGui_SameLine(ctx); reaper.ImGui_Text(ctx,string.format("| %d MIDI | %d Spur",#items,#tracks)); if update_status~="" then reaper.ImGui_TextWrapped(ctx,update_status) end; reaper.ImGui_Separator(ctx); local w,h=reaper.ImGui_GetContentRegionAvail(ctx); local ih,bh=112,32; local ch=math.max(120,h-ih-bh*2-64); if reaper.ImGui_BeginChild(ctx,"##chat",w,ch,reaper.ImGui_ChildFlags_Borders()) then draw_history(); reaper.ImGui_EndChild(ctx) end; reaper.ImGui_Spacing(ctx); local input_flags=0; if type(reaper.ImGui_InputTextFlags_NoHorizontalScroll)=="function" then input_flags=input_flags|reaper.ImGui_InputTextFlags_NoHorizontalScroll() end; local limit=math.max(12,math.floor((w-20)/9.5)); local changed,v=reaper.ImGui_InputTextMultiline(ctx,"##request",input,w,ih,input_flags); if changed then input=wrap_text(v,limit) end; input=text_context_menu("##requestmenu",input,true); reaper.ImGui_Spacing(ctx); local gap=6; local bw=math.max(100,(w-gap)/2); if reaper.ImGui_Button(ctx,busy and "Warten…" or "Senden",bw,bh) and not busy then submit() end; reaper.ImGui_SameLine(ctx,0,gap); if reaper.ImGui_Button(ctx,"Verlauf",bw,bh) then chat_start=1; info_visible=false; history_mode=true end; if reaper.ImGui_Button(ctx,"Chat leeren",bw,bh) then chat_start=#history+1; info_visible=false; history_mode=false end; reaper.ImGui_SameLine(ctx,0,gap); if reaper.ImGui_Button(ctx,"Schließen",bw,bh) then open=false end; pop_font(pushed); reaper.ImGui_End(ctx) end; if open then reaper.defer(loop) elseif not restarting then remember_closed() end end
+loop()
+'''
+          p.write_text(s)
+          # Static integrity checks.
+          for needle in ['local VERSION="0.5.1"','claude-fable-5','gemini-3.8-flash','gpt-5.6-sol','local function run_ai','local function model_selector','Studio v','BeginPopupContextItem','auto_initialized_tracks','NEED_NEW']:
+              assert needle in s, needle
+          assert 'run_openai(' not in s
+      - name: Lua syntax check
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq lua5.4
+          luac5.4 -p 'Composition Studio.lua'
+      - name: Commit v0.5.1
+        run: |
+          git config user.name "Composition Studio Builder"
+          git config user.email "actions@users.noreply.github.com"
+          git add 'Composition Studio.lua'
+          git commit -m 'Composition Studio v0.5.1 multi-provider UI'
+          git push origin composition-studio
