@@ -12,41 +12,38 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: composition-studio
-      - name: Upgrade source
+      - name: Upgrade source structurally
         shell: python
         run: |
           from pathlib import Path
           p=Path('Composition Studio.lua')
           s=p.read_text()
-          assert '-- @version 0.4-test3' in s
-          assert 'local VERSION="0.4-test3"' in s
-          s=s.replace('-- @version 0.4-test3','-- @version 0.4-test4',1)
-          s=s.replace('local VERSION="0.4-test3"','local VERSION="0.4-test4"',1)
-          old="Eine vollständige Neukomposition benötigt weder ein vorhandenes MIDI-Item noch eine ausgewählte Spur; ein klarer Auftrag wie 'Erstelle ein Stück für Violine und Gitarre' ist NEED_MUSIC. Für Analyse des Notenmaterials: NEED_ANALYSIS. Für Komposition, Variation, Fortsetzung, Ergänzung oder musikalische Bearbeitung mit neuem MIDI: NEED_MUSIC. Für normale Unterhaltung: CHAT."
-          new="Eine vollständige Neukomposition benötigt weder ein vorhandenes MIDI-Item noch eine ausgewählte Spur. Eine vorhandene REAPER-Auswahl oder TIME_SELECTION ist zunächst nur verfügbarer Kontext und darf einen sprachlich eindeutigen Auftrag wie 'Erstelle ein Stück für Violine und Gitarre' nicht automatisch in eine Bearbeitung verwandeln. Nur wenn der Benutzer sprachlich auf vorhandenes Material, Auswahl, Spur, Item, markierten Bereich, Fortsetzung oder Bearbeitung Bezug nimmt, ist die Auswahl als Ziel zu behandeln. Ein eindeutiger eigenständiger Neukompositionsauftrag ist NEED_NEW. Für Analyse des Notenmaterials: NEED_ANALYSIS. Für Komposition mit ausgewähltem Material, Variation, Fortsetzung, Ergänzung oder musikalische Bearbeitung mit neuem MIDI: NEED_MUSIC. Für normale Unterhaltung: CHAT."
-          assert old in s
-          s=s.replace(old,new,1)
-          oldfmt='NEED_ANALYSIS|Begründung\\nNEED_MUSIC|Begründung\\nNur angebotene IDs verwenden.'
-          newfmt='NEED_ANALYSIS|Begründung\\nNEED_MUSIC|Begründung\\nNEED_NEW|Begründung\\nNur angebotene IDs verwenden.'
-          assert oldfmt in s
-          s=s.replace(oldfmt,newfmt,1)
-          old2='local why=answer:match("^NEED_MUSIC|(.*)$"); if why then local full=selected_items(true);'
-          new2='local newwhy=answer:match("^NEED_NEW|(.*)$"); local why=answer:match("^NEED_MUSIC|(.*)$"); if newwhy or why then local full=newwhy and {} or selected_items(true); if newwhy then tracks={} end;'
-          assert old2 in s
-          s=s.replace(old2,new2,1)
+          assert '-- @version 0.4-test3' in s and 'local VERSION="0.4-test3"' in s
+          s=s.replace('-- @version 0.4-test3','-- @version 0.4-test4',1).replace('local VERSION="0.4-test3"','local VERSION="0.4-test4"',1)
+          marker="Eine vollständige Neukomposition benötigt weder ein vorhandenes MIDI-Item noch eine ausgewählte Spur; ein klarer Auftrag wie 'Erstelle ein Stück für Violine und Gitarre' ist NEED_MUSIC."
+          replacement="Eine vollständige Neukomposition benötigt weder ein vorhandenes MIDI-Item noch eine ausgewählte Spur. Vorhandene REAPER-Auswahl und TIME_SELECTION sind nur Kontext, solange der Benutzer nicht sprachlich auf vorhandenes Material, Auswahl, Spur, Item, markierten Bereich, Fortsetzung oder Bearbeitung Bezug nimmt. Ein klarer eigenständiger Auftrag wie 'Erstelle ein Stück für Violine und Gitarre' ist NEED_NEW."
+          assert marker in s
+          s=s.replace(marker,replacement,1)
+          marker2='local why=answer:match("^NEED_MUSIC|(.*)$"); if why then local full=selected_items(true);'
+          replacement2='local newwhy=answer:match("^NEED_NEW|(.*)$"); local why=answer:match("^NEED_MUSIC|(.*)$"); if newwhy or why then local full=newwhy and {} or selected_items(true); if newwhy then tracks={} end;'
+          assert marker2 in s
+          s=s.replace(marker2,replacement2,1)
+          # Add NEED_NEW to the controller's allowed response list immediately before the existing instruction terminator.
+          anchor='NEED_MUSIC|Begründung'
+          pos=s.find(anchor)
+          assert pos>=0
+          endpos=pos+len(anchor)
+          if 'NEED_NEW|Begründung' not in s[pos:pos+120]:
+              s=s[:endpos]+'\\nNEED_NEW|Begründung'+s[endpos:]
           p.write_text(s)
           assert 'local VERSION="0.4-test4"' in s
           assert 'NEED_NEW|Begründung' in s
           assert 'local full=newwhy and {} or selected_items(true)' in s
-      - name: Static checks
-        run: |
-          grep -q 'local VERSION="0.4-test4"' 'Composition Studio.lua'
-          grep -q 'NEED_NEW|Begründung' 'Composition Studio.lua'
-          grep -q 'local full=newwhy and {} or selected_items(true)' 'Composition Studio.lua'
+          assert 'ist NEED_NEW' in s
       - name: Commit source
         run: |
           git config user.name "Composition Studio Builder"
           git config user.email "actions@users.noreply.github.com"
           git add 'Composition Studio.lua'
-          git commit -m 'Composition Studio 0.4-test4 intent-aware context'
+          git commit -m 'Composition Studio 0.4-test4 intent-aware fresh composition'
           git push origin composition-studio
