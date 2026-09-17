@@ -1,0 +1,42 @@
+name: Composition Studio 0.4-test3 upgrade
+on:
+  push:
+    branches: [composition-studio]
+    paths: ['.github/workflows/composition-studio-0.4-test3.yml']
+permissions:
+  contents: write
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: composition-studio
+      - name: Apply automatic HALion initialization
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('Composition Studio.lua')
+          s=p.read_text()
+          assert '-- @version 0.4-test2' in s
+          assert 'local VERSION="0.4-test2"' in s
+          s=s.replace('-- @version 0.4-test2','-- @version 0.4-test3',1)
+          s=s.replace('local VERSION="0.4-test2"','local VERSION="0.4-test3"',1)
+          old='local made,ae=apply_composition(comp,full,tracks); if not made then diag_set("apply_result","error: "..tostring(ae)); add("KI","Die musikalische Antwort konnte nicht sicher angewendet werden: "..tostring(ae)); return end; diag_set("apply_result","created_items="..tostring(#made)); add("KI",string.format("Erledigt. %d neues bzw. überarbeitetes MIDI-Item wurde erzeugt.",#made)); return end;'
+          new='local made,ae=apply_composition(comp,full,tracks); if not made then diag_set("apply_result","error: "..tostring(ae)); add("KI","Die musikalische Antwort konnte nicht sicher angewendet werden: "..tostring(ae)); return end; diag_set("apply_result","created_items="..tostring(#made)); local htr,hsl=initialize_halion_project(); diag_set("halion_result",string.format("auto_initialized_tracks=%d slots=%d",htr,hsl)); add("KI",string.format("Erledigt. %d neues bzw. überarbeitetes MIDI-Item wurde erzeugt.",#made)); return end;'
+          assert old in s, 'composition success path not found'
+          s=s.replace(old,new,1)
+          oldinfo='• HALion Sonic kann jetzt auf Wunsch aus den ersten Program Changes der direkt aufliegenden bzw. hineingerouteten MIDI-Spuren initialisiert werden.'
+          newinfo='• Nach erfolgreicher MIDI-Erzeugung wird HALion Sonic automatisch einmalig aus den ersten Program Changes der direkt aufliegenden bzw. hineingerouteten MIDI-Spuren initialisiert.'
+          assert oldinfo in s
+          s=s.replace(oldinfo,newinfo,1)
+          p.write_text(s)
+          assert 'local VERSION="0.4-test3"' in s
+          assert 'diag_set("halion_result",string.format("auto_initialized_tracks=%d slots=%d",htr,hsl))' in s
+      - name: Commit 0.4-test3
+        run: |
+          git config user.name "wibem1"
+          git config user.email "wibem1@googlemail.com"
+          git add "Composition Studio.lua"
+          git commit -m "Composition Studio 0.4-test3 automatic HALion initialization"
+          git push origin composition-studio
