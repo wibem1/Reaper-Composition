@@ -1,10 +1,10 @@
 -- @description Composition Studio
--- @version 0.3-test7
+-- @version 0.3-test8
 -- @author Klangwerke
 -- @about Dockable AI chat, controlled REAPER actions and MIDI composition.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.3-test7"
+local VERSION="0.3-test8"
 local EXT_SECTION,EXT_KEY="CompositionStudio","OpenAIAPIKey"
 local WINDOW_STATE_KEY="WindowOpen"
 local HISTORY_KEY="HistoryV1"
@@ -53,6 +53,21 @@ local function shell_quote(s) return "'"..tostring(s):gsub("'","'\\''").."'" end
 local function json_escape(s) return tostring(s or ""):gsub("\\","\\\\"):gsub('"','\\"'):gsub("\n","\\n"):gsub("\r","\\r"):gsub("\t","\\t") end
 local function read_file(p) local f=io.open(p,"rb"); if not f then return nil end; local s=f:read("*a"); f:close(); return s end
 local function write_file(p,s) local f=io.open(p,"wb"); if not f then return false end; f:write(s); f:close(); return true end
+
+local function version_parts(v)
+ local a,b,t=v:match("^(%d+)%.(%d+)%-test(%d+)$")
+ return tonumber(a),tonumber(b),tonumber(t)
+end
+
+local function version_is_newer(remote,localv)
+ local ra,rb,rt=version_parts(remote)
+ local la,lb,lt=version_parts(localv)
+ if not (ra and la) then return false end
+ if ra~=la then return ra>la end
+ if rb~=lb then return rb>lb end
+ return rt>lt
+end
+
 local function install_update()
  if busy then return end
  busy=true
@@ -78,6 +93,11 @@ local function install_update()
  end
  if remote_version==VERSION then
   update_status="Bereits aktuell: "..VERSION
+  busy=false
+  return
+ end
+ if not version_is_newer(remote_version,VERSION) then
+  update_status="Kein neueres Update verfügbar. Lokal: "..VERSION..", GitHub: "..remote_version
   busy=false
   return
  end
