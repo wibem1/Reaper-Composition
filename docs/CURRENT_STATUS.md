@@ -1,13 +1,56 @@
 # Composition Studio – aktueller Funktionsstand
 
 **Version:** 0.3-test1  
-**Zweck dieser Datei:** Verbindliche Momentaufnahme dessen, was die aktuelle Version kann, was noch nicht implementiert ist und welche Grenzen gelten. Diese Datei wird ab jetzt bei jeder funktionalen Erweiterung von Composition Studio mitgeführt.
+**Zweck dieser Datei:** Verbindliche Momentaufnahme dessen, was die aktuelle Version kann, was noch nicht implementiert ist und welche Grenzen gelten. Diese Datei wird bei jeder funktionalen Erweiterung von Composition Studio mitgeführt.
 
 ## Grundprinzip
 
 Composition Studio ist eine natürlichsprachliche KI-Steuerung innerhalb von REAPER. REAPER bleibt DAW, Arrangement, Transport, MIDI-Editor, Mixer und Plugin-Host. Composition Studio interpretiert freie Sprache; Lua führt ausschließlich freigegebene und validierte REAPER-Aktionen aus.
 
 Es gibt **keine Triggerwörter** und keine vom Benutzer zu lernende Befehlssprache.
+
+## Interaktion zwischen KI, Lua und REAPER
+
+Dieser Bereich ist ein eigenständiger Kern der weiteren Entwicklung. Composition Studio soll nicht nur MIDI erzeugen, sondern freie Sprache in kontrollierte, nachvollziehbare Arbeitsschritte innerhalb von REAPER übersetzen.
+
+### Kommunikationskette
+
+**Benutzer → KI → kontrollierter Auftrag → Lua-Prüfung → REAPER → Ergebnisrückmeldung → KI → Benutzer**
+
+Die Rollen sind bewusst getrennt:
+
+- **Benutzer:** formuliert musikalische oder technische Wünsche in normaler Sprache.
+- **KI:** interpretiert Bedeutung und Zusammenhang und entscheidet, welche freigegebenen Werkzeuge oder zusätzlichen Musikdaten benötigt werden.
+- **Lua / Composition Studio:** liest den notwendigen REAPER-Kontext, prüft KI-Aufträge und führt ausschließlich freigegebene Aktionen aus.
+- **REAPER:** ist die tatsächliche Arbeitsumgebung mit Items, Takes, Spuren, Noten, Zeitpositionen und Undo.
+
+### Kontrollierte interne Kommunikation
+
+Die KI erhält **keinen freien Zugang zu Lua, REAPER, Shell oder beliebigem Programmcode**. Sie darf ausschließlich Aktionen aus einem von Composition Studio definierten Werkzeug- und Aktionskatalog anfordern. Lua prüft Ziel, Parameter und Zulässigkeit, bevor REAPER verändert wird.
+
+Für einfache Aufträge erhält die KI zunächst nur kompakten Projektkontext. Benötigt ein musikalischer Auftrag konkrete Noten, kann die KI zusätzliche Musikdaten anfordern. Erst dann liefert Lua die benötigten MIDI-Informationen. Dieses zweistufige Verfahren reduziert Datenmenge und API-Kosten.
+
+### Nachvollziehbarkeit – verbindliches Architekturprinzip
+
+Es darf **keine geheime oder prinzipiell unprüfbare Kommunikation** zwischen KI, Lua und REAPER geben. Interne Vorgänge dürfen im normalen Betrieb ausgeblendet sein, müssen aber rekonstruierbar und bei Bedarf sichtbar gemacht werden können.
+
+Für den weiteren Ausbau ist deshalb ein Aktionsprotokoll vorgesehen. Es soll mindestens nachvollziehbar machen:
+
+1. den Benutzerauftrag,
+2. den von Composition Studio erkannten REAPER-Kontext,
+3. von der KI angeforderte zusätzliche Daten,
+4. den von der KI vorgeschlagenen Aktionsplan bzw. die angeforderte Aktion,
+5. die Lua-Prüfung von Ziel und Parametern,
+6. die tatsächlich an REAPER ausgeführte Aktion,
+7. Erfolg, Fehler und Undo-Status.
+
+Eine Änderung darf der KI gegenüber erst als erfolgreich ausgeführt gelten, nachdem Lua/REAPER die Ausführung bestätigt haben. Bei Mehrdeutigkeit wird nachgefragt statt geraten. Nicht freigegebene Aktionen werden nicht durch ähnliche oder erfundene Aktionen ersetzt.
+
+### Perspektive: mehrstufige Aktionspläne
+
+Komplexe Aufträge werden später mehrere Werkzeuge kombinieren müssen. Die KI soll dafür einen nachvollziehbaren Plan erstellen; Lua prüft und führt die einzelnen Schritte kontrolliert aus. Für größere Eingriffe ist ein **Nur-planen-Modus** vorgesehen, in dem ein Plan zunächst sichtbar und prüfbar gemacht werden kann, ohne REAPER zu verändern. Eine spätere explizite Freigabe vor größeren Eingriffen bleibt als Bedienkonzept vorgesehen.
+
+**Leitgedanke:** Die KI programmiert REAPER nicht frei. Sie arbeitet intelligent mit einem von Composition Studio bereitgestellten, überprüfbaren Werkzeugkasten.
 
 ## In 0.3-test1 vorhanden
 
@@ -67,6 +110,7 @@ Bei musikalischer Überarbeitung wird das vorhandene Ausgangsmaterial nicht dire
 - Transpositionen, die MIDI-Pitches außerhalb 0–127 erzeugen würden, werden abgebrochen.
 - Item-Verschiebungen/Kopien vor Projektbeginn werden abgebrochen.
 - Ausgeführte lokale Aktionen werden im Chat benannt und sind per REAPER Undo rückgängig zu machen.
+- Vollständiges Aktionsprotokoll, Ergebnisbestätigung und Nur-planen-Modus sind als nächster Transparenz-Ausbau vorgesehen und in 0.3-test1 noch nicht vollständig implementiert.
 
 ## Wichtige aktuelle Grenzen
 
@@ -116,6 +160,9 @@ Derzeit **nicht** als musikalischer KI-Kontext übertragen werden insbesondere:
 
 Folgende Fähigkeiten gehören zum vorgesehenen Ausbau, sind in 0.3-test1 aber **nicht freigegeben**:
 
+- vollständiges sichtbares Aktionsprotokoll der KI-Lua-REAPER-Kommunikation,
+- Nur-planen-Modus und Freigabe komplexer Aktionspläne,
+- mehrstufige kontrollierte Aktionspläne,
 - einzelne MIDI-Noten oder definierte MIDI-Bereiche zeitlich verschieben/kopieren/löschen,
 - Velocity gezielt verändern,
 - Item teilen,
@@ -154,6 +201,8 @@ Composition Studio soll REAPER nicht ersetzen. Deshalb sind derzeit keine eigene
 7. musikalischer Auftrag – MIDI-Noten sollen erst nach `NEED_MUSIC` verwendet werden,
 8. REAPER Undo für jede ausgeführte lokale Aktion.
 
+Danach folgt als eigener Entwicklungsschritt die protokollierbare und in der Benutzeroberfläche einsehbare KI-Lua-REAPER-Kommunikation.
+
 ## Dokumentationsregel
 
-Bei jeder funktionalen Änderung an Composition Studio wird diese Datei zusammen mit dem Script aktualisiert. Ein neuer Versionsstand gilt erst dann als vollständig dokumentiert, wenn hier **vorhandene Funktionen, Grenzen, nicht implementierte Funktionen und der nächste Teststand** nachvollziehbar festgehalten sind.
+Bei jeder funktionalen Änderung an Composition Studio wird diese Datei zusammen mit dem Script aktualisiert. Ein neuer Versionsstand gilt erst dann als vollständig dokumentiert, wenn hier **vorhandene Funktionen, Grenzen, nicht implementierte Funktionen, Interaktion zwischen KI/Lua/REAPER und der nächste Teststand** nachvollziehbar festgehalten sind.
