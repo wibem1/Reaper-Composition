@@ -1,12 +1,13 @@
 -- @description Composition Studio
--- @version 0.3-test1
+-- @version 0.3-test2
 -- @author Klangwerke
 -- @about Dockable AI chat, controlled REAPER actions and MIDI composition.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.3-test1"
+local VERSION="0.3-test2"
 local EXT_SECTION,EXT_KEY="CompositionStudio","OpenAIAPIKey"
 local WINDOW_STATE_KEY="WindowOpen"
+local HISTORY_KEY="HistoryV1"
 
 local function ensure_native_startup_hook()
   local p=reaper.GetResourcePath().."/Scripts/__startup.lua"
@@ -32,8 +33,9 @@ local ctx=reaper.ImGui_CreateContext(SCRIPT_NAME,reaper.ImGui_ConfigFlags_Dockin
 if type(reaper.ImGui_SetConfigVar)=="function" and type(reaper.ImGui_ConfigVar_DockingNoSplit)=="function" then reaper.ImGui_SetConfigVar(ctx,reaper.ImGui_ConfigVar_DockingNoSplit(),1) end
 reaper.SetExtState(EXT_SECTION,WINDOW_STATE_KEY,"1",true)
 
-local open,input,busy=true,"",false
-local history={{role="KI",text="Composition Studio ist bereit."}}
+local open,input,busy,show_info=true,"",false,false
+local history={}
+local current_project=reaper.EnumProjects(-1,"")
 local font=nil
 if type(reaper.ImGui_CreateFont)=="function" then local ok,f=pcall(reaper.ImGui_CreateFont,"sans-serif"); if ok then font=f end end
 if font and type(reaper.ImGui_Attach)=="function" then pcall(reaper.ImGui_Attach,ctx,font) end
@@ -62,6 +64,20 @@ local function run_openai(prompt,key)
  local cmd="/usr/bin/curl -sS --max-time 120 -o "..shell_quote(rs).." -w '%{http_code}' -H "..shell_quote("Authorization: Bearer "..key).." -H 'Content-Type: application/json' --data-binary @"..shell_quote(rq).." https://api.openai.com/v1/responses > "..shell_quote(cd)
  os.execute(cmd); local status=trim(read_file(cd)); local raw=read_file(rs); os.remove(rq); os.remove(rs); os.remove(cd); if status~="200" or not raw then return nil,"KI-Aufruf fehlgeschlagen (HTTP "..tostring(status)..")." end; return response_text(raw),nil
 end
+
+local function enc(s) return (tostring(s or ""):gsub("([^%w%-%._~])",function(c) return string.format("%%%02X",string.byte(c)) end)) end
+local function dec(s) return (tostring(s or ""):gsub("%%(%x%x)",function(h) return string.char(tonumber(h,16)) end)) end
+local function save_history(proj)
+ proj=proj or current_project; if not proj then return end
+ local rows={}; for _,m in ipairs(history) do rows[#rows+1]=enc(m.role).."\t"..enc(m.text) end
+ reaper.SetProjExtState(proj,EXT_SECTION,HISTORY_KEY,table.concat(rows,"\n"))
+end
+local function load_history(proj)
+ history={}; if proj then local _,raw=reaper.GetProjExtState(proj,EXT_SECTION,HISTORY_KEY); if raw and raw~="" then for row in raw:gmatch("[^\n]+") do local r,t=row:match("^([^\t]*)\t(.*)$"); if r then history[#history+1]={role=dec(r),text=dec(t)} end end end end
+ if #history==0 then history={{role="KI",text="Composition Studio ist bereit."}} end
+end
+local function add(role,text) history[#history+1]={role=role,text=text}; save_history() end
+load_history(current_project)
 
 local function item_guid(item) local ok,g=reaper.GetSetMediaItemInfo_String(item,"GUID","",false); return ok and g or "" end
 local function track_guid(track) return reaper.GetTrackGUID(track) or "" end
@@ -112,8 +128,7 @@ local function parse_action(line,items)
  local by_item,by_track={},{ }; for _,it in ipairs(items) do by_item[it.guid]=it; by_track[it.track_guid]=it.track end
  if typ=="TRANSPOSE" then local n=tonumber(b); if not by_item[a] or not n or n~=math.floor(n) or n < -127 or n > 127 then return nil,"Ungültige Transposition." end; return {kind=typ,item=by_item[a],n=n,desc=desc}
  elseif typ=="MOVE_ITEM" or typ=="COPY_ITEM" then local q=tonumber(b); if not by_item[a] or not q then return nil,"Ungültige Item-Verschiebung." end; return {kind=typ,item=by_item[a],q=q,desc=desc}
- elseif typ=="RENAME_TRACK" then if not by_track[a] or trim(b)=="" then return nil,"Ungültige Spurbenennung." end; return {kind=typ,track=by_track[a],name=trim(b),desc=desc}
- end
+ elseif typ=="RENAME_TRACK" then if not by_track[a] or trim(b)=="" then return nil,"Ungültige Spurbenennung." end; return {kind=typ,track=by_track[a],name=trim(b),desc=desc} end
  return nil,"Diese Aktion ist nicht freigegeben."
 end
 local function execute_action(a)
@@ -143,7 +158,6 @@ CS|new|-|NAME|startQN,durationQN,pitch,velocity,channel;...
 Für revised muss SOURCE_GUID angeboten sein; für new '-'. NAME enthält kein |.
 ]].."AUFTRAG:\n"..request.."\nMUSIK:\n"..music_context(items)
 end
-local function add(role,text) history[#history+1]={role=role,text=text} end
 local function process(request)
  local key=get_key(); if not key then add("KI","Kein OpenAI API-Key verfügbar."); return end
  local items=selected_items(false)
@@ -152,18 +166,48 @@ local function process(request)
  local chat=answer:match("^CHAT|(.*)$"); if chat then add("KI",trim(chat)); return end
  local ask=answer:match("^ASK|(.*)$"); if ask then add("KI",trim(ask)); return end
  local why=answer:match("^NEED_MUSIC|(.*)$")
- if why then
-  local full=selected_items(true); local comp,cerr=run_openai(composition_prompt(request,full),key); if not comp then add("KI",cerr); return end; local made,aerr=apply_composition(comp,full); if not made then add("KI","Die musikalische Antwort konnte nicht sicher angewendet werden: "..tostring(aerr)); return end; add("KI",string.format("Erledigt. %d neues bzw. überarbeitetes MIDI-Item wurde erzeugt.",#made)); return
- end
+ if why then local full=selected_items(true); local comp,cerr=run_openai(composition_prompt(request,full),key); if not comp then add("KI",cerr); return end; local made,aerr=apply_composition(comp,full); if not made then add("KI","Die musikalische Antwort konnte nicht sicher angewendet werden: "..tostring(aerr)); return end; add("KI",string.format("Erledigt. %d neues bzw. überarbeitetes MIDI-Item wurde erzeugt.",#made)); return end
  if answer:match("^ACTION|") then local a,perr=parse_action(answer,items); if not a then add("KI","Ich führe nichts aus: "..perr); return end; local ok,aerr=execute_action(a); if not ok then add("KI","Die Aktion wurde nicht ausgeführt: "..tostring(aerr)); return end; add("KI",trim(a.desc).." – erledigt. REAPER Undo kann die Änderung rückgängig machen."); return end
  add("KI","Ich konnte den Auftrag nicht eindeutig einem sicheren Vorgang zuordnen und habe nichts verändert.")
 end
 local function submit() local r=trim(input); if r=="" or busy then return end; input=""; add("Du",r); busy=true; process(r); busy=false end
 local function draw_history() for _,m in ipairs(history) do reaper.ImGui_TextWrapped(ctx,m.role..": "..m.text); reaper.ImGui_Spacing(ctx) end end
-local function remember_closed() reaper.SetExtState(EXT_SECTION,WINDOW_STATE_KEY,"0",true) end
+local function remember_closed() save_history(); reaper.SetExtState(EXT_SECTION,WINDOW_STATE_KEY,"0",true) end
+local function check_project_change()
+ local p=reaper.EnumProjects(-1,""); if p~=current_project then save_history(current_project); current_project=p; load_history(current_project) end
+end
+local function draw_info()
+ if not show_info then return end
+ reaper.ImGui_SetNextWindowSize(ctx,520,560,reaper.ImGui_Cond_FirstUseEver())
+ local visible; visible,show_info=reaper.ImGui_Begin(ctx,"Info – Composition Studio "..VERSION,show_info)
+ if visible then
+  reaper.ImGui_TextWrapped(ctx,"AKTUELLER STAND")
+  reaper.ImGui_Separator(ctx)
+  reaper.ImGui_TextWrapped(ctx,"Composition Studio arbeitet direkt in REAPER. GPT-5.6 nutzt den Dialog und ausgewählte MIDI-Items als Kontext. Es kann MIDI analysieren und bearbeiten, Varianten bzw. neue MIDI-Items erzeugen sowie freigegebene REAPER-Aktionen ausführen. Änderungen lassen sich mit REAPER Undo rückgängig machen.")
+  reaper.ImGui_Spacing(ctx); reaper.ImGui_TextWrapped(ctx,"WAS IST NEU? – "..VERSION); reaper.ImGui_Separator(ctx)
+  reaper.ImGui_TextWrapped(ctx,"• Composition Studio merkt sich, ob sein Fenster geöffnet war, und öffnet es beim nächsten REAPER-Start automatisch wieder.\n• Die Versionsnummer ist dauerhaft in der Oberfläche sichtbar.\n• Der Verlauf wird projektbezogen gespeichert und beim erneuten Öffnen wiederhergestellt.\n• Der Verlauf kann gelöscht werden.\n• Neuer Info-Bereich mit Funktionsstand, Neuerungen und Testhinweisen.")
+  reaper.ImGui_Spacing(ctx); reaper.ImGui_TextWrapped(ctx,"IN DIESER VERSION BITTE TESTEN"); reaper.ImGui_Separator(ctx)
+  reaper.ImGui_TextWrapped(ctx,"• REAPER mit geöffnetem Composition Studio beenden und neu starten: Composition Studio soll automatisch wieder erscheinen.\n• REAPER mit geschlossenem Composition Studio beenden: beim nächsten Start soll es geschlossen bleiben.\n• Projekt speichern und neu öffnen: der Verlauf soll wieder vorhanden sein.\n• Zwischen zwei REAPER-Projekten wechseln: jedes Projekt soll seinen eigenen Verlauf zeigen.\n• Verlauf löschen und prüfen, ob er nach erneutem Öffnen gelöscht bleibt.\n• Prüfen, ob überall "..VERSION.." angezeigt wird.\n• Unterhaltung, MIDI-Auswahl, MIDI-Bearbeitung bzw. Variante und REAPER Undo kurz gegenprüfen.")
+  reaper.ImGui_End(ctx)
+ end
+end
 local function loop()
- if not open then remember_closed(); return end; reaper.ImGui_SetNextWindowSize(ctx,520,700,reaper.ImGui_Cond_FirstUseEver()); local visible; visible,open=reaper.ImGui_Begin(ctx,SCRIPT_NAME.."  "..VERSION,open)
- if visible then local pushed=push_font(); local items=selected_items(false); reaper.ImGui_Text(ctx,string.format("GPT-5.6  |  %d MIDI-Item(s) ausgewählt",#items)); reaper.ImGui_Separator(ctx); local w,h=reaper.ImGui_GetContentRegionAvail(ctx); local ih,bh=150,38; local ch=math.max(120,h-ih-bh-40); if reaper.ImGui_BeginChild(ctx,"##chat",w,ch,reaper.ImGui_ChildFlags_Borders()) then draw_history(); reaper.ImGui_EndChild(ctx) end; reaper.ImGui_Spacing(ctx); local changed,v=reaper.ImGui_InputTextMultiline(ctx,"##request",input,w,ih); if changed then input=v end; reaper.ImGui_Spacing(ctx); if reaper.ImGui_Button(ctx,busy and "Bitte warten…" or "Senden",120,bh) and not busy then submit() end; reaper.ImGui_SameLine(ctx); if reaper.ImGui_Button(ctx,"Schließen",120,bh) then open=false end; pop_font(pushed); reaper.ImGui_End(ctx) end
+ if not open then remember_closed(); return end
+ check_project_change()
+ reaper.ImGui_SetNextWindowSize(ctx,520,700,reaper.ImGui_Cond_FirstUseEver()); local visible; visible,open=reaper.ImGui_Begin(ctx,SCRIPT_NAME.."  "..VERSION,open)
+ if visible then
+  local pushed=push_font(); local items=selected_items(false)
+  reaper.ImGui_Text(ctx,SCRIPT_NAME.."  "..VERSION); reaper.ImGui_SameLine(ctx); if reaper.ImGui_Button(ctx,"Info") then show_info=true end
+  reaper.ImGui_Text(ctx,string.format("GPT-5.6  |  %d MIDI-Item(s) ausgewählt",#items)); reaper.ImGui_Separator(ctx)
+  local w,h=reaper.ImGui_GetContentRegionAvail(ctx); local ih,bh=150,38; local ch=math.max(120,h-ih-bh-78)
+  if reaper.ImGui_BeginChild(ctx,"##chat",w,ch,reaper.ImGui_ChildFlags_Borders()) then draw_history(); reaper.ImGui_EndChild(ctx) end
+  reaper.ImGui_Spacing(ctx); local changed,v=reaper.ImGui_InputTextMultiline(ctx,"##request",input,w,ih); if changed then input=v end; reaper.ImGui_Spacing(ctx)
+  if reaper.ImGui_Button(ctx,busy and "Bitte warten…" or "Senden",120,bh) and not busy then submit() end
+  reaper.ImGui_SameLine(ctx); if reaper.ImGui_Button(ctx,"Verlauf löschen",150,bh) then history={{role="KI",text="Verlauf gelöscht. Composition Studio ist bereit."}}; save_history() end
+  reaper.ImGui_SameLine(ctx); if reaper.ImGui_Button(ctx,"Schließen",120,bh) then open=false end
+  pop_font(pushed); reaper.ImGui_End(ctx)
+ end
+ draw_info()
  if open then reaper.defer(loop) else remember_closed() end
 end
 loop()
