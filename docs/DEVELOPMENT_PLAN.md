@@ -13,6 +13,27 @@ Die zentrale Architektur lautet:
 
 Es gibt keine Triggerwörter und keine freie Code-Ausführung durch die KI.
 
+## Künstlerisches Grundprinzip: Freiheit des Kompositionsprozesses
+
+Composition Studio soll den Anwender nicht auf eine bestimmte Art des Komponierens festlegen. Die entscheidende Neuerung ist die Möglichkeit, einen Kompositionsprozess innerhalb einer realen DAW schnell, effektiv, rekursiv und bis ins Detail frei gestaltbar durchzuführen.
+
+Die KI darf deshalb sowohl **Werkzeug im offenen Arbeitsprozess** als auch – wenn der Anwender es ausdrücklich möchte – **weitgehend selbständig komponierender Partner** sein. Es gibt keinen künstlichen Gegensatz zwischen diesen Arbeitsweisen.
+
+Composition Studio soll beispielsweise ermöglichen:
+
+- eine vollständige Komposition mit einem einzigen Auftrag erzeugen zu lassen,
+- nur eine einzelne Stimme oder wenige Takte zu erzeugen,
+- vorhandenes Material schrittweise weiterzuentwickeln,
+- einzelne Ergebnisse zu übernehmen, zu verändern oder zu verwerfen,
+- menschliche und KI-erzeugte Arbeit beliebig miteinander zu verbinden,
+- zwischen sehr detaillierter Steuerung und weitgehender Delegation jederzeit zu wechseln.
+
+Ob eine auf einen einzigen Auftrag hin erzeugte Komposition bereits als „fertig“ oder sogar „perfekt“ angesehen wird, entscheidet ausschließlich der Anwender. Composition Studio soll weder eine vollständige KI-Komposition verhindern noch den Anwender zu ihr drängen.
+
+**Entwicklungsziel ist maximale gestalterische Wahlfreiheit:** Der Anwender bestimmt jederzeit, **was** delegiert wird, **wie viel** delegiert wird und **wie detailliert** er selbst in den Prozess eingreift.
+
+Die Stärke von Composition Studio liegt damit nicht darin, einen bestimmten „richtigen“ kreativen Workflow vorzuschreiben, sondern sehr unterschiedliche Arbeitsweisen innerhalb desselben REAPER-Projekts schnell zugänglich zu machen.
+
 ---
 
 ## Phase 1 – Fundament 0.3-test1 praktisch absichern
@@ -108,7 +129,7 @@ Beispiel:
 
 Die KI soll daraus einen strukturierten Plan erstellen. Lua prüft jeden Schritt, Ziele und Parameter.
 
-Zunächst wird ein **Nur-planen-Modus** eingeführt: Der Plan wird vollständig erzeugt und angezeigt, REAPER aber nicht verändert. Erst nach ausreichenden Tests wird die kontrollierte Ausführung freigegeben. Für größere Eingriffe ist eine vorherige Benutzerfreigabe als Bedienkonzept vorgesehen.
+Zunächst wird ein **Nur-planen-Modus** eingeführt: Der Plan wird vollständig erzeugt und angezeigt, REAPER aber nicht verändert. Erst nach ausreichenden Tests wird die kontrollierte Ausführung freigegeben. Für größere Eingriffe kann eine vorherige Benutzerfreigabe als wählbares Bedienkonzept vorgesehen werden. Sie darf jedoch nicht zu einer Bevormundung werden: Der Anwender soll selbst bestimmen können, ob Composition Studio Schritt für Schritt bestätigt, einen Plan als Ganzes ausführt oder – soweit technisch sicher möglich – einen umfangreichen Auftrag selbständig bearbeitet.
 
 **Abschlusskriterium:** Mehrstufige Pläne sind nachvollziehbar, validierbar und im Nur-planen-Modus zuverlässig.
 
@@ -116,7 +137,7 @@ Zunächst wird ein **Nur-planen-Modus** eingeführt: Der Plan wird vollständig 
 
 ## Phase 6 – REAPER-Aktionen und KI-Komposition verbinden
 
-**Ziel:** Technische Arrangementoperationen und musikalische Generierung bilden einen gemeinsamen rekursiven Arbeitsprozess.
+**Ziel:** Technische Arrangementoperationen und musikalische Generierung bilden einen gemeinsamen rekursiven Arbeitsprozess. Derselbe Mechanismus soll aber ebenso vollständige Kompositionsaufträge ermöglichen, wenn der Anwender dies wünscht.
 
 Beispiele:
 
@@ -125,17 +146,18 @@ Beispiele:
 - nur eine ausgewählte Stimme weiterentwickeln,
 - einen Schluss verlängern,
 - einen definierten Bereich musikalisch variieren,
-- vorhandene Stimmen unverändert lassen und neue Stimmen ergänzen.
+- vorhandene Stimmen unverändert lassen und neue Stimmen ergänzen,
+- aus einem freien Auftrag eine vollständige neue Komposition erzeugen und unmittelbar als bearbeitbares REAPER-Projektmaterial bereitstellen.
 
-Hier entsteht die eigentliche rekursive Kompositionsumgebung: Nicht jedes Mal wird ein komplettes neues Stück erzeugt; Composition Studio arbeitet schrittweise am realen REAPER-Projekt.
+Hier entsteht die eigentliche flexible Kompositionsumgebung: Composition Studio kann schrittweise am realen REAPER-Projekt arbeiten, aber ebenso weitreichende Kompositionsentscheidungen übernehmen, wenn der Anwender dies verlangt. Beide Arbeitsweisen bleiben gleichberechtigt.
 
-**Abschlusskriterium:** Ein komplexer musikalischer Auftrag kann Lesen, Komponieren und mehrere kontrollierte REAPER-Aktionen zuverlässig verbinden.
+**Abschlusskriterium:** Sowohl ein komplexer rekursiver musikalischer Auftrag als auch ein weitgehend delegierter vollständiger Kompositionsauftrag kann Lesen, Komponieren und kontrollierte REAPER-Aktionen zuverlässig verbinden.
 
 ---
 
 ## Phase 7 – Komfortoberfläche für den erweiterten Arbeitsprozess
 
-**Ziel:** Die wachsende Funktionalität bleibt übersichtlich und beherrschbar.
+**Ziel:** Die wachsende Funktionalität bleibt übersichtlich und beherrschbar, ohne eine bestimmte Arbeitsweise vorzuschreiben.
 
 Geplant:
 
@@ -148,7 +170,8 @@ Geplant:
 - verständliche Undo-/Änderungshistorie,
 - projektbezogener persistenter Chat,
 - Provider-/Modellauswahl,
-- Kosten-/Tokenanzeige.
+- Kosten-/Tokenanzeige,
+- wählbare Abstufung zwischen detaillierter Kontrolle und weitgehender Delegation.
 
 Die Oberfläche wird nicht losgelöst vorab gebaut, sondern folgt den tatsächlich bewährten Arbeitsabläufen der Phasen 1–6.
 
