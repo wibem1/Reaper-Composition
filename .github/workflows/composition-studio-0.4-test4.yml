@@ -1,5 +1,8 @@
 name: Composition Studio 0.4-test4 upgrade
-on: workflow_dispatch
+on:
+  push:
+    branches: [composition-studio]
+    paths: ['.github/workflows/composition-studio-0.4-test4.yml']
 permissions:
   contents: write
 jobs:
@@ -9,4 +12,34 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: composition-studio
-      - run: echo ready
+      - name: Upgrade source
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('Composition Studio.lua')
+          s=p.read_text()
+          assert '-- @version 0.4-test3' in s
+          assert 'local VERSION="0.4-test3"' in s
+          s=s.replace('-- @version 0.4-test3','-- @version 0.4-test4',1)
+          s=s.replace('local VERSION="0.4-test3"','local VERSION="0.4-test4"',1)
+          old="Eine vollständige Neukomposition benötigt weder ein vorhandenes MIDI-Item noch eine ausgewählte Spur; ein klarer Auftrag wie 'Erstelle ein Stück für Violine und Gitarre' ist NEED_MUSIC. Für Analyse des Notenmaterials:"
+          new="Eine vollständige Neukomposition benötigt weder ein vorhandenes MIDI-Item noch eine ausgewählte Spur. Eine vorhandene REAPER-Auswahl oder TIME_SELECTION ist zunächst nur verfügbarer Kontext und darf einen sprachlich eindeutigen Auftrag wie 'Erstelle ein Stück für Violine und Gitarre' nicht automatisch in eine Bearbeitung verwandeln. Nur wenn der Benutzer sprachlich auf vorhandenes Material, Auswahl, Spur, Item, markierten Bereich, Fortsetzung oder Bearbeitung Bezug nimmt, ist die Auswahl als Ziel zu behandeln. Ein eindeutiger eigenständiger Neukompositionsauftrag ist NEED_NEW. Für Analyse des Notenmaterials:"
+          assert old in s
+          s=s.replace(old,new,1)
+          s=s.replace('NEED_MUSIC|Begründung\\nNur angebotene IDs verwenden.','NEED_MUSIC|Begründung\\nNEED_NEW|Begründung\\nNur angebotene IDs verwenden.',1)
+          s=s.replace('Für Komposition, Variation, Fortsetzung, Ergänzung oder musikalische Bearbeitung mit neuem MIDI: NEED_MUSIC.','Für eigenständige Neukomposition ohne sprachlichen Bezug auf vorhandenes Material: NEED_NEW. Für Komposition mit ausgewähltem Material, Variation, Fortsetzung, Ergänzung oder musikalische Bearbeitung mit neuem MIDI: NEED_MUSIC.',1)
+          old2='local why=answer:match("^NEED_MUSIC|(.*)$"); if why then local full=selected_items(true);'
+          new2='local newwhy=answer:match("^NEED_NEW|(.*)$"); local why=answer:match("^NEED_MUSIC|(.*)$"); if newwhy or why then local full=newwhy and {} or selected_items(true); if newwhy then tracks={} end;'
+          assert old2 in s
+          s=s.replace(old2,new2,1)
+          p.write_text(s)
+          assert 'local VERSION="0.4-test4"' in s
+          assert 'NEED_NEW|Begründung' in s
+          assert 'local full=newwhy and {} or selected_items(true)' in s
+      - name: Commit source
+        run: |
+          git config user.name "Composition Studio Builder"
+          git config user.email "actions@users.noreply.github.com"
+          git add 'Composition Studio.lua'
+          git commit -m 'Composition Studio 0.4-test4 intent-aware context'
+          git push origin composition-studio
