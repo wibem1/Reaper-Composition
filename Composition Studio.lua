@@ -1,13 +1,15 @@
 -- @description Composition Studio
--- @version 0.3-test6
+-- @version 0.3-test7
 -- @author Klangwerke
 -- @about Dockable AI chat, controlled REAPER actions and MIDI composition.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.3-test6"
+local VERSION="0.3-test7"
 local EXT_SECTION,EXT_KEY="CompositionStudio","OpenAIAPIKey"
 local WINDOW_STATE_KEY="WindowOpen"
 local HISTORY_KEY="HistoryV1"
+local UPDATE_URL="https://raw.githubusercontent.com/wibem1/Reaper-Composition/composition-studio/Composition%20Studio.lua"
+local SCRIPT_PATH=(debug.getinfo(1,"S").source or ""):gsub("^@","")
 
 local function ensure_native_startup_hook()
   local p=reaper.GetResourcePath().."/Scripts/__startup.lua"
@@ -34,6 +36,8 @@ if type(reaper.ImGui_SetConfigVar)=="function" and type(reaper.ImGui_ConfigVar_D
 reaper.SetExtState(EXT_SECTION,WINDOW_STATE_KEY,"1",true)
 
 local open,input,busy=true,"",false
+local restarting=false
+local update_status=""
 local history={}
 local chat_start=1
 local info_visible=false
@@ -49,6 +53,48 @@ local function shell_quote(s) return "'"..tostring(s):gsub("'","'\\''").."'" end
 local function json_escape(s) return tostring(s or ""):gsub("\\","\\\\"):gsub('"','\\"'):gsub("\n","\\n"):gsub("\r","\\r"):gsub("\t","\\t") end
 local function read_file(p) local f=io.open(p,"rb"); if not f then return nil end; local s=f:read("*a"); f:close(); return s end
 local function write_file(p,s) local f=io.open(p,"wb"); if not f then return false end; f:write(s); f:close(); return true end
+local function install_update()
+ if busy then return end
+ busy=true
+ update_status="Update wird geladen …"
+ local tmp=os.tmpname()..".lua"
+ local code=os.tmpname()..".code"
+ local cmd="/usr/bin/curl -sS -L --max-time 60 -o "..shell_quote(tmp).." -w '%{http_code}' "..shell_quote(UPDATE_URL).." > "..shell_quote(code)
+ os.execute(cmd)
+ local status=trim(read_file(code))
+ local fresh=read_file(tmp)
+ os.remove(code)
+ os.remove(tmp)
+ if status~="200" or not fresh or #fresh<1000 then
+  update_status="Update fehlgeschlagen (HTTP "..tostring(status)..")."
+  busy=false
+  return
+ end
+ local remote_version=fresh:match("%-%- @version%s+([%w%.%-]+)")
+ if not remote_version or not fresh:find('local SCRIPT_NAME="Composition Studio"',1,true) then
+  update_status="Update abgebrochen: heruntergeladene Datei ist ungültig."
+  busy=false
+  return
+ end
+ if remote_version==VERSION then
+  update_status="Bereits aktuell: "..VERSION
+  busy=false
+  return
+ end
+ if SCRIPT_PATH=="" or not write_file(SCRIPT_PATH,fresh) then
+  update_status="Update konnte nicht installiert werden."
+  busy=false
+  return
+ end
+ update_status="Update auf "..remote_version.." installiert. Neustart …"
+ restarting=true
+ open=false
+ reaper.SetExtState(EXT_SECTION,WINDOW_STATE_KEY,"1",true)
+ reaper.defer(function()
+  local ok,err=pcall(dofile,SCRIPT_PATH)
+  if not ok then reaper.ShowConsoleMsg("Composition Studio Update-Neustart: "..tostring(err).."\n") end
+ end)
+end
 local function utf8(cp) if cp<=0x7f then return string.char(cp) elseif cp<=0x7ff then return string.char(0xc0+math.floor(cp/64),0x80+cp%64) elseif cp<=0xffff then return string.char(0xe0+math.floor(cp/4096),0x80+math.floor(cp/64)%64,0x80+cp%64) else return string.char(0xf0+math.floor(cp/262144),0x80+math.floor(cp/4096)%64,0x80+cp%64) end end
 local function read_json_string(raw,q)
  local out,i={},q+1
@@ -195,7 +241,7 @@ local function process(request)
 end
 local function submit() local r=trim(input); if r=="" or busy then return end; input=""; info_visible=false; history_mode=false; add("Du",r); busy=true; process(r); busy=false end
 local function info_text()
- return "AKTUELLER STAND\n\nComposition Studio arbeitet direkt in REAPER. GPT-5.6 nutzt den Dialog und ausgewählte MIDI-Items als Kontext. Es kann MIDI analysieren und bearbeiten, Varianten bzw. neue MIDI-Items erzeugen sowie freigegebene REAPER-Aktionen ausführen. Änderungen lassen sich mit REAPER Undo rückgängig machen.\n\nWAS IST NEU? – "..VERSION.."\n\n• Verlauf ist wieder direkt erreichbar.\n• Die vier Hauptbuttons stehen platzsparend in zwei Zeilen mit je zwei Buttons.\n• Verlauf zeigt den vollständigen projektbezogenen Dialog und bietet dort Verlauf löschen an.\n• Chat leeren leert weiterhin nur die sichtbare Chatansicht; der gespeicherte Verlauf bleibt erhalten.\n• Die kompakte Seitenleiste und das kompakte Eingabefeld bleiben erhalten.\n\nIN DIESER VERSION BITTE TESTEN\n\n• Start: Composition Studio muss ohne ReaScript-Parserfehler öffnen.\n• Buttonraster: Senden | Verlauf in Zeile 1; Chat leeren | Schließen in Zeile 2.\n• Verlauf: vollständigen gespeicherten Projektverlauf anzeigen.\n• Verlauf löschen: gespeicherten Projektverlauf wirklich zurücksetzen.\n• Chat leeren: sichtbaren Chat leeren und danach über Verlauf wieder anzeigen können.\n• Prüfen, ob "..VERSION.." angezeigt wird."
+ return "AKTUELLER STAND\n\nComposition Studio arbeitet direkt in REAPER. GPT-5.6 nutzt den Dialog und ausgewählte MIDI-Items als Kontext. Es kann MIDI analysieren und bearbeiten, Varianten bzw. neue MIDI-Items erzeugen sowie freigegebene REAPER-Aktionen ausführen. Änderungen lassen sich mit REAPER Undo rückgängig machen.\n\nWAS IST NEU? – "..VERSION.."\n\n• Update lädt die neueste Fassung direkt aus GitHub und startet Composition Studio anschließend neu.\n• Die interne Fensterkennung bleibt versionsunabhängig, damit REAPER die Dockingposition bei Updates beibehalten kann.\n• Die sichtbare Versionsnummer steht weiterhin im Fensterinhalt.\n• Verlauf und das 2×2-Buttonraster bleiben unverändert.\n\nIN DIESER VERSION BITTE TESTEN\n\n• Composition Studio einmal wie gewohnt andocken.\n• Bei einer späteren Version Update drücken: die neue Fassung soll geladen und automatisch gestartet werden.\n• Die Dockingposition soll dabei erhalten bleiben.\n• Wenn GitHub bereits dieselbe Version enthält, meldet Update: Bereits aktuell.\n• Prüfen, ob "..VERSION.." angezeigt wird."
 end
 local function draw_history()
  if info_visible then reaper.ImGui_TextWrapped(ctx,info_text()); return end
@@ -210,13 +256,19 @@ local function check_project_change()
  local p=reaper.EnumProjects(-1,""); if p~=current_project then save_history(current_project); current_project=p; load_history(current_project) end
 end
 local function loop()
- if not open then remember_closed(); return end
+ if not open then if not restarting then remember_closed() end; return end
  check_project_change()
- reaper.ImGui_SetNextWindowSize(ctx,360,620,reaper.ImGui_Cond_FirstUseEver()); local visible; visible,open=reaper.ImGui_Begin(ctx,SCRIPT_NAME.."  "..VERSION,open)
+ reaper.ImGui_SetNextWindowSize(ctx,360,620,reaper.ImGui_Cond_FirstUseEver()); local visible; visible,open=reaper.ImGui_Begin(ctx,SCRIPT_NAME.."###CompositionStudioMain",open)
  if visible then
   local pushed=push_font(); local items=selected_items(false)
-  reaper.ImGui_Text(ctx,SCRIPT_NAME.."  "..VERSION); reaper.ImGui_SameLine(ctx); if reaper.ImGui_Button(ctx,"Info") then info_visible=true; history_mode=false end
-  reaper.ImGui_Text(ctx,string.format("GPT-5.6  |  %d MIDI-Item(s) ausgewählt",#items)); reaper.ImGui_Separator(ctx)
+  reaper.ImGui_Text(ctx,SCRIPT_NAME.."  "..VERSION)
+  reaper.ImGui_SameLine(ctx)
+  if reaper.ImGui_Button(ctx,"Info") then info_visible=true; history_mode=false end
+  reaper.ImGui_SameLine(ctx)
+  if reaper.ImGui_Button(ctx,"Update") then install_update() end
+  reaper.ImGui_Text(ctx,string.format("GPT-5.6  |  %d MIDI-Item(s) ausgewählt",#items))
+  if update_status~="" then reaper.ImGui_TextWrapped(ctx,update_status) end
+  reaper.ImGui_Separator(ctx)
   local w,h=reaper.ImGui_GetContentRegionAvail(ctx); local ih,bh=82,32; local button_area=bh*2+6; local ch=math.max(120,h-ih-button_area-78)
   if reaper.ImGui_BeginChild(ctx,"##chat",w,ch,reaper.ImGui_ChildFlags_Borders()) then draw_history(); reaper.ImGui_EndChild(ctx) end
   reaper.ImGui_Spacing(ctx); local changed,v=reaper.ImGui_InputTextMultiline(ctx,"##request",input,w,ih); if changed then input=v end; reaper.ImGui_Spacing(ctx)
@@ -227,6 +279,6 @@ local function loop()
   reaper.ImGui_SameLine(ctx,0,gap); if reaper.ImGui_Button(ctx,"Schließen",bw,bh) then open=false end
   pop_font(pushed); reaper.ImGui_End(ctx)
  end
- if open then reaper.defer(loop) else remember_closed() end
+ if open then reaper.defer(loop) elseif not restarting then remember_closed() end
 end
 loop()
