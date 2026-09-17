@@ -1,10 +1,10 @@
 -- @description Composition Studio
--- @version 0.3-test3
+-- @version 0.3-test4
 -- @author Klangwerke
 -- @about Dockable AI chat, controlled REAPER actions and MIDI composition.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.3-test3"
+local VERSION="0.3-test4"
 local EXT_SECTION,EXT_KEY="CompositionStudio","OpenAIAPIKey"
 local WINDOW_STATE_KEY="WindowOpen"
 local HISTORY_KEY="HistoryV1"
@@ -48,7 +48,7 @@ local function shell_quote(s) return "'"..tostring(s):gsub("'","'\\''").."'" end
 local function json_escape(s) return tostring(s or ""):gsub("\\","\\\\"):gsub('"','\\"'):gsub("\n","\\n"):gsub("\r","\\r"):gsub("\t","\\t") end
 local function read_file(p) local f=io.open(p,"rb"); if not f then return nil end; local s=f:read("*a"); f:close(); return s end
 local function write_file(p,s) local f=io.open(p,"wb"); if not f then return false end; f:write(s); f:close(); return true end
-local function utf8(cp) if cp<=0x7f then return string.char(cp) elseif cp<=0x7ff then return string.char(0xc0+math.floor(cp/64),0x80+cp%64) elseif cp<=0xffff then return string.char(0xe0+math.floor(cp/4096),0x80+math.floor(cp/64)%64,0x80+cp%64) else return string.char(0xf0+math.floor(cp/262144),0x80+math.floor(cp/4096)%64,0x80+cp%64) end end
+local function utf8(cp) if cp<=0x7f then return string.char(cp) elseif cp<=0x7ff then return string.char(0xc0+math.floor(cp/64),0x80+cp%64) elseif cp<=0xffff then return string.char(0xe0+math.floor(cp/4096),0x80+math.floor(cp/64)%64,0x80+cp%64) else return string.char(0xf0+math.floor(cp/262144),0x80+math.floor(cp/4096)%64,0x80+math.floor(cp/64)%64,0x80+cp%64) end end
 local function read_json_string(raw,q)
  local out,i={},q+1
  while i<=#raw do local c=raw:sub(i,i); if c=='"' then return table.concat(out) end
@@ -176,7 +176,7 @@ local function process(request)
 end
 local function submit() local r=trim(input); if r=="" or busy then return end; input=""; info_visible=false; add("Du",r); busy=true; process(r); busy=false end
 local function info_text()
- return "AKTUELLER STAND\n\nComposition Studio arbeitet direkt in REAPER. GPT-5.6 nutzt den Dialog und ausgewählte MIDI-Items als Kontext. Es kann MIDI analysieren und bearbeiten, Varianten bzw. neue MIDI-Items erzeugen sowie freigegebene REAPER-Aktionen ausführen. Änderungen lassen sich mit REAPER Undo rückgängig machen.\n\nWAS IST NEU? – "..VERSION.."\n\n• Composition Studio merkt sich, ob sein Fenster geöffnet war, und öffnet es beim nächsten REAPER-Start automatisch wieder.\n• Die Versionsnummer ist dauerhaft in der Oberfläche sichtbar.\n• Der Verlauf wird projektbezogen gespeichert und beim erneuten Öffnen wiederhergestellt.\n• Info erscheint jetzt direkt im Chatfeld statt in einem separaten Fenster.\n• Das sichtbare Chatfeld kann geleert werden, ohne den gespeicherten Projektverlauf zu löschen.\n\nIN DIESER VERSION BITTE TESTEN\n\n• Info: Der Text muss direkt im Chatfeld erscheinen.\n• Chat leeren: Das Chatfeld wird leer, der gespeicherte Projektverlauf bleibt erhalten.\n• Nach einer neuen Eingabe erscheinen neue Nachrichten wieder im geleerten Chatfeld.\n• REAPER mit geöffnetem Composition Studio beenden und neu starten: Composition Studio soll automatisch wieder erscheinen.\n• REAPER mit geschlossenem Composition Studio beenden: beim nächsten Start soll es geschlossen bleiben.\n• Projekt speichern und neu öffnen: der Verlauf soll wieder vorhanden sein.\n• Zwischen zwei REAPER-Projekten wechseln: jedes Projekt soll seinen eigenen Verlauf zeigen.\n• Prüfen, ob überall "..VERSION.." angezeigt wird."
+ return "AKTUELLER STAND\n\nComposition Studio arbeitet direkt in REAPER. GPT-5.6 nutzt den Dialog und ausgewählte MIDI-Items als Kontext. Es kann MIDI analysieren und bearbeiten, Varianten bzw. neue MIDI-Items erzeugen sowie freigegebene REAPER-Aktionen ausführen. Änderungen lassen sich mit REAPER Undo rückgängig machen.\n\nWAS IST NEU? – "..VERSION.."\n\n• Composition Studio ist als schmale REAPER-Seitenleiste ausgelegt; die Standardbreite wurde deutlich reduziert.\n• Das Eingabefeld ist kompakter und lässt mehr Platz für REAPER und den Chatverlauf.\n• Info erscheint direkt im Chatfeld.\n• Das sichtbare Chatfeld kann geleert werden, ohne den gespeicherten Projektverlauf zu löschen.\n• Composition Studio merkt sich weiterhin, ob sein Fenster geöffnet war, und öffnet es beim nächsten REAPER-Start automatisch wieder.\n• Der Verlauf bleibt projektbezogen gespeichert.\n\nIN DIESER VERSION BITTE TESTEN\n\n• Seitenleiste: Composition Studio soll wesentlich weniger REAPER-Arbeitsfläche beanspruchen.\n• Eingabefeld: ungefähr drei bis vier Textzeilen hoch und weiterhin gut benutzbar.\n• Info: Text erscheint direkt im Chatfeld.\n• Chat leeren: sichtbarer Chat wird leer, gespeicherter Projektverlauf bleibt erhalten.\n• REAPER mit geöffnetem Composition Studio neu starten: Composition Studio soll automatisch wieder erscheinen.\n• Projekt speichern und neu öffnen: Verlauf soll wieder vorhanden sein.\n• Prüfen, ob "..VERSION.." angezeigt wird."
 end
 local function draw_history()
  if info_visible then reaper.ImGui_TextWrapped(ctx,info_text()); return end
@@ -189,17 +189,18 @@ end
 local function loop()
  if not open then remember_closed(); return end
  check_project_change()
- reaper.ImGui_SetNextWindowSize(ctx,520,700,reaper.ImGui_Cond_FirstUseEver()); local visible; visible,open=reaper.ImGui_Begin(ctx,SCRIPT_NAME.."  "..VERSION,open)
+ reaper.ImGui_SetNextWindowSize(ctx,360,620,reaper.ImGui_Cond_FirstUseEver()); local visible; visible,open=reaper.ImGui_Begin(ctx,SCRIPT_NAME.."  "..VERSION,open)
  if visible then
   local pushed=push_font(); local items=selected_items(false)
   reaper.ImGui_Text(ctx,SCRIPT_NAME.."  "..VERSION); reaper.ImGui_SameLine(ctx); if reaper.ImGui_Button(ctx,"Info") then info_visible=true end
   reaper.ImGui_Text(ctx,string.format("GPT-5.6  |  %d MIDI-Item(s) ausgewählt",#items)); reaper.ImGui_Separator(ctx)
-  local w,h=reaper.ImGui_GetContentRegionAvail(ctx); local ih,bh=150,38; local ch=math.max(120,h-ih-bh-78)
+  local w,h=reaper.ImGui_GetContentRegionAvail(ctx); local ih,bh=82,32; local ch=math.max(120,h-ih-bh-72)
   if reaper.ImGui_BeginChild(ctx,"##chat",w,ch,reaper.ImGui_ChildFlags_Borders()) then draw_history(); reaper.ImGui_EndChild(ctx) end
   reaper.ImGui_Spacing(ctx); local changed,v=reaper.ImGui_InputTextMultiline(ctx,"##request",input,w,ih); if changed then input=v end; reaper.ImGui_Spacing(ctx)
-  if reaper.ImGui_Button(ctx,busy and "Bitte warten…" or "Senden",120,bh) and not busy then submit() end
-  reaper.ImGui_SameLine(ctx); if reaper.ImGui_Button(ctx,"Chat leeren",130,bh) then chat_start=#history+1; info_visible=false end
-  reaper.ImGui_SameLine(ctx); if reaper.ImGui_Button(ctx,"Schließen",120,bh) then open=false end
+  local gap=6; local bw=math.max(74,(w-gap*2)/3)
+  if reaper.ImGui_Button(ctx,busy and "Warten…" or "Senden",bw,bh) and not busy then submit() end
+  reaper.ImGui_SameLine(ctx,0,gap); if reaper.ImGui_Button(ctx,"Chat leeren",bw,bh) then chat_start=#history+1; info_visible=false end
+  reaper.ImGui_SameLine(ctx,0,gap); if reaper.ImGui_Button(ctx,"Schließen",bw,bh) then open=false end
   pop_font(pushed); reaper.ImGui_End(ctx)
  end
  if open then reaper.defer(loop) else remember_closed() end
