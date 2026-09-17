@@ -1,0 +1,75 @@
+name: Build Composition Studio v0.5.10
+on:
+  push:
+    paths: ['.github/workflows/build-v0510.yml']
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: composition-studio, fetch-depth: 0}
+      - name: Patch
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('Composition Studio.lua'); s=p.read_text()
+          s=s.replace('-- @version 0.5.9','-- @version 0.5.10',1).replace('local VERSION="0.5.9"','local VERSION="0.5.10"',1)
+          # Diagnosis: persist synchronously and also to an on-disk cache; deferred persistence could serialize a later/reset table.
+          old='local function diag_set(k,v) last_diag[k]=v; reaper.defer(persist_diag) end'
+          new='local DIAG_CACHE_PATH=reaper.GetResourcePath().."/Composition-Studio-Last-Diagnosis.json"\nlocal function diag_set(k,v) last_diag[k]=v; persist_diag(); local raw=diag_json(); if raw then write_file(DIAG_CACHE_PATH,raw) end end'
+          if old not in s: raise SystemExit('diag_set anchor missing')
+          s=s.replace(old,new,1)
+          # Restore from disk cache first, falling back to ExtState. This survives script updates/restarts and large diagnostics.
+          old='local raw=reaper.GetExtState(EXT_SECTION,DIAG_STATE_KEY)\n if raw=="" then return end'
+          new='local raw=read_file(DIAG_CACHE_PATH) or reaper.GetExtState(EXT_SECTION,DIAG_STATE_KEY)\n if not raw or raw=="" then return end'
+          if old not in s: raise SystemExit('restore anchor missing')
+          s=s.replace(old,new,1)
+          # At the start of each request persist the identity fields immediately.
+          old='last_diag={version=VERSION,provider=provider,model=model,request=request}; local key=get_key();'
+          new='last_diag={version=VERSION,provider=provider,model=model,request=request}; persist_diag(); write_file(DIAG_CACHE_PATH,diag_json()); local key=get_key();'
+          if old not in s: raise SystemExit('begin_process anchor missing')
+          s=s.replace(old,new,1)
+          # Persist generated item GUIDs in project state so export survives an update/restart.
+          old='data.comp=text; data.made=made; last_made=made; launch("summary",summary_prompt(data.request,text,made),key,data); return'
+          new='data.comp=text; data.made=made; last_made=made; local gs={}; for _,it in ipairs(made) do gs[#gs+1]=item_guid(it) end; reaper.SetProjExtState(0,EXT_SECTION,"LastMadeGUIDs",table.concat(gs,"\\n")); persist_diag(); write_file(DIAG_CACHE_PATH,diag_json()); launch("summary",summary_prompt(data.request,text,made),key,data); return'
+          if old not in s: raise SystemExit('last_made anchor missing')
+          s=s.replace(old,new,1)
+          # Recover last generated items by GUID when in-memory list is empty (e.g. after update/restart).
+          marker='local function export_last_midi()\n local valid={}; for _,it in ipairs(last_made) do if it and reaper.ValidatePtr2(0,it,"MediaItem*") then valid[#valid+1]=it end end'
+          repl='''local function recover_last_made()\n local _,raw=reaper.GetProjExtState(0,EXT_SECTION,"LastMadeGUIDs"); if not raw or raw=="" then return {} end\n local wanted={}; for g in raw:gmatch("[^\\r\\n]+") do wanted[g]=true end; local found={}\n for i=0,reaper.CountMediaItems(0)-1 do local it=reaper.GetMediaItem(0,i); if wanted[item_guid(it)] then found[#found+1]=it end end\n return found\nend\nlocal function export_last_midi()\n local valid={}; for _,it in ipairs(last_made) do if it and reaper.ValidatePtr2(0,it,"MediaItem*") then valid[#valid+1]=it end end\n if #valid==0 then valid=recover_last_made() end'''
+          if marker not in s: raise SystemExit('export anchor missing')
+          s=s.replace(marker,repl,1)
+          # Make export self-diagnosing and verify actual file after writing.
+          old='if write_file(fn,smf) then update_status="MIDI gespeichert: "..fn else update_status="MIDI konnte nicht gespeichert werden." end'
+          new='if write_file(fn,smf) then local chk=read_file(fn); if chk and #chk==#smf and chk:sub(1,4)=="MThd" then update_status="MIDI gespeichert: "..fn.." ("..tostring(#valid).." Spur(en), "..tostring(#smf).." Bytes)" else update_status="MIDI-Datei konnte nach dem Schreiben nicht verifiziert werden: "..fn end else update_status="MIDI konnte nicht gespeichert werden: "..fn end'
+          if old not in s: raise SystemExit('write verify anchor missing')
+          s=s.replace(old,new,1)
+          # Diagnosis save copies the cached/full current diagnosis and verifies it.
+          old='if write_file(fn,diag_json()) then persist_diag(); update_status="Diagnose gespeichert: "..fn else update_status="Diagnose konnte nicht gespeichert werden." end'
+          new='local raw=diag_json(); if write_file(fn,raw) then local chk=read_file(fn); if chk and #chk==#raw then persist_diag(); write_file(DIAG_CACHE_PATH,raw); update_status="Diagnose gespeichert: "..fn.." ("..tostring(#raw).." Bytes)" else update_status="Diagnose konnte nach dem Schreiben nicht verifiziert werden: "..fn end else update_status="Diagnose konnte nicht gespeichert werden: "..fn end'
+          if old not in s: raise SystemExit('diagnosis write anchor missing')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+      - name: Verify
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq lua5.4
+          luac5.4 -p 'Composition Studio.lua'
+          grep -F -- '-- @version 0.5.10' 'Composition Studio.lua'
+          grep -F 'local VERSION="0.5.10"' 'Composition Studio.lua'
+          grep -F 'Composition-Studio-Last-Diagnosis.json' 'Composition Studio.lua'
+          grep -F 'LastMadeGUIDs' 'Composition Studio.lua'
+          grep -F 'recover_last_made' 'Composition Studio.lua'
+          grep -F 'local function midi_translation_prompt' 'Composition Studio.lua'
+          grep -F 'musical_draft' 'Composition Studio.lua'
+          ! grep -q 'osascript' 'Composition Studio.lua'
+          ! grep -q 'GetUserFileNameForWrite' 'Composition Studio.lua'
+      - name: Publish
+        run: |
+          git config user.name wibem1
+          git config user.email wibem1@googlemail.com
+          git add 'Composition Studio.lua'
+          git commit -m 'Composition Studio v0.5.10: durable diagnosis and restart-safe MIDI export'
+          git push origin HEAD:composition-studio
