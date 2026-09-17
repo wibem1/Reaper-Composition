@@ -40,3 +40,4 @@ jobs:
           git add "Composition Studio.lua"
           git commit -m "Composition Studio 0.4-test3 automatic HALion initialization"
           git push origin composition-studio
+# trigger
