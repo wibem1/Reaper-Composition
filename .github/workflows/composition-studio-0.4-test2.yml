@@ -1,0 +1,68 @@
+name: Composition Studio 0.4-test2 upgrade
+on:
+  push:
+    branches: [composition-studio]
+    paths: ['.github/workflows/composition-studio-0.4-test2.yml']
+permissions:
+  contents: write
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: composition-studio
+      - name: Apply diagnostic upgrade
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('Composition Studio.lua')
+          s=p.read_text()
+          assert '-- @version 0.4-test1' in s
+          s=s.replace('-- @version 0.4-test1','-- @version 0.4-test2',1).replace('local VERSION="0.4-test1"','local VERSION="0.4-test2"',1)
+          s=s.replace('local open,input,busy=true,"",false;', 'local open,input,busy=true,"",false; local last_diag={};',1)
+          anchor='local function run_openai(prompt,key)'
+          diag='''local function diag_set(k,v) last_diag[k]=v end
+          local function diag_json()
+           local keys={"version","request","context","controller_prompt","controller_answer","composition_prompt","composition_answer","apply_result","halion_result"}; local a={"{\\n  \\"timestamp\\": \\""..json_escape(os.date("%Y-%m-%dT%H:%M:%S")).."\\""}
+           for _,k in ipairs(keys) do a[#a+1]=",\\n  \\""..k.."\\": \\""..json_escape(last_diag[k] or "").."\\"" end; a[#a+1]="\\n}\\n"; return table.concat(a)
+          end
+          local function save_diagnosis()
+           local dir=reaper.GetResourcePath().."/Composition Studio Diagnosen"; reaper.RecursiveCreateDirectory(dir,0); local fn=dir.."/Composition-Studio-Diagnose-"..os.date("%Y%m%d-%H%M%S")..".json"
+           if write_file(fn,diag_json()) then update_status="Diagnose gespeichert: "..fn else update_status="Diagnose konnte nicht gespeichert werden." end
+          end
+          '''
+          assert anchor in s
+          s=s.replace(anchor,diag+anchor,1)
+          old='local function process(request) local key=get_key();'
+          new='local function process(request) last_diag={version=VERSION,request=request}; local key=get_key();'
+          assert old in s; s=s.replace(old,new,1)
+          old='local prompt=CONTROLLER.."\\n\\nBISHERIGER DIALOG:'
+          new='diag_set("context",compact_context(items,tracks)); local prompt=CONTROLLER.."\\n\\nBISHERIGER DIALOG:'
+          assert old in s; s=s.replace(old,new,1)
+          old='local answer,err=run_openai(prompt,key); if not answer then'
+          new='diag_set("controller_prompt",prompt); local answer,err=run_openai(prompt,key); diag_set("controller_answer",answer or err or ""); if not answer then'
+          assert old in s; s=s.replace(old,new,1)
+          old='local comp,e=run_openai(composition_prompt(request,full,tracks),key); if not comp then'
+          new='local cp=composition_prompt(request,full,tracks); diag_set("composition_prompt",cp); local comp,e=run_openai(cp,key); diag_set("composition_answer",comp or e or ""); if not comp then'
+          assert old in s; s=s.replace(old,new,1)
+          old='local made,ae=apply_composition(comp,full,tracks); if not made then'
+          new='local made,ae=apply_composition(comp,full,tracks); diag_set("apply_result",made and ("created_items="..tostring(#made)) or ("ERROR: "..tostring(ae))); if not made then'
+          assert old in s; s=s.replace(old,new,1)
+          old='if a.kind=="INIT_HALION" then local tr,sl=initialize_halion_project(); a.desc=string.format("HALion Sonic initialisiert: %d Instanzspur(en), %d Slot(s)",tr,sl)'
+          new='if a.kind=="INIT_HALION" then local tr,sl=initialize_halion_project(); a.desc=string.format("HALion Sonic initialisiert: %d Instanzspur(en), %d Slot(s)",tr,sl); diag_set("halion_result",a.desc)'
+          assert old in s; s=s.replace(old,new,1)
+          old='if reaper.ImGui_Button(ctx,"Info") then info_visible=true; history_mode=false end; reaper.ImGui_SameLine(ctx); if reaper.ImGui_Button(ctx,"Update") then install_update() end;'
+          new='if reaper.ImGui_Button(ctx,"Info") then info_visible=true; history_mode=false end; reaper.ImGui_SameLine(ctx); if reaper.ImGui_Button(ctx,"Diagnose") then save_diagnosis() end; reaper.ImGui_SameLine(ctx); if reaper.ImGui_Button(ctx,"Update") then install_update() end;'
+          assert old in s; s=s.replace(old,new,1)
+          old='• Die übrige Kompositionslogik bleibt unverändert.'
+          new='• Diagnose speichert den letzten vollständigen Vorgang als JSON.\\n• Die übrige Kompositionslogik bleibt unverändert.'
+          assert old in s; s=s.replace(old,new,1)
+          p.write_text(s)
+      - name: Commit 0.4-test2
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add 'Composition Studio.lua'
+          git commit -m 'Composition Studio 0.4-test2: add diagnostic JSON export'
+          git push origin composition-studio
