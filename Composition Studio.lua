@@ -1,10 +1,10 @@
 -- @description Composition Studio
--- @version 0.5.5
+-- @version 0.5.6
 -- @author Klangwerke
 -- @about Dockable AI chat, controlled REAPER actions and MIDI composition.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.5.5"
+local VERSION="0.5.6"
 local EXT_SECTION="CompositionStudio"
 local PROVIDER_KEY,MODEL_KEY="AIProvider","AIModel"
 local KEY_NAMES={openai="OpenAIAPIKey",anthropic="AnthropicAPIKey",google="GoogleAPIKey"}
@@ -74,14 +74,18 @@ local function diag_json()
  for _,k in ipairs(keys) do a[#a+1]=",\n  \""..k.."\": \""..json_escape(last_diag[k] or "").."\"" end; a[#a+1]="\n}\n"; return table.concat(a)
 end
 local function save_path_dialog(title,suggested,ext)
- local filter=ext=="mid" and "MIDI files (*.mid)" or "JSON files (*.json)"
- local ok,fn=reaper.JS_Dialog_BrowseForSaveFile(title,"",suggested,filter)
- if not ok or not fn or fn=="" then return nil end
+ -- Native macOS Save panel via AppleScript; no JS_ReaScriptAPI dependency.
+ local script=os.tmpname()..".applescript"; local out=os.tmpname()..".path"
+ local function aq(v) return tostring(v or ""):gsub("\\","\\\\"):gsub('"','\\"') end
+ local as='try\nset f to choose file name with prompt "'..aq(title)..'" default name "'..aq(suggested)..'"\nPOSIX path of f\non error number -128\nreturn ""\nend try\n'
+ if not write_file(script,as) then update_status="Speichern-Dialog konnte nicht vorbereitet werden."; return nil end
+ os.execute("/usr/bin/osascript "..shell_quote(script).." > "..shell_quote(out).." 2>/dev/null")
+ local fn=trim(read_file(out)); os.remove(script); os.remove(out)
+ if not fn or fn=="" then return nil end
  if not fn:lower():match("%."..ext.."$") then fn=fn.."."..ext end
  return fn
 end
 local function save_diagnosis()
- if type(reaper.JS_Dialog_BrowseForSaveFile)~="function" then update_status="Speichern-Dialog benötigt JS_ReaScriptAPI."; return end
  local fn=save_path_dialog("Diagnose speichern","Composition-Studio-Diagnose-"..os.date("%Y%m%d-%H%M%S")..".json","json")
  if not fn then return end
  if write_file(fn,diag_json()) then update_status="Diagnose gespeichert: "..fn else update_status="Diagnose konnte nicht gespeichert werden." end
@@ -100,7 +104,6 @@ local function midi_track_chunk(events,name)
  out[#out+1]=vlq(0)..string.char(0xFF,0x2F,0); local d=table.concat(out); return "MTrk"..be32(#d)..d
 end
 local function export_last_midi()
- if type(reaper.JS_Dialog_BrowseForSaveFile)~="function" then update_status="Speichern-Dialog benötigt JS_ReaScriptAPI."; return end
  local valid={}; for _,it in ipairs(last_made) do if it and reaper.ValidatePtr2(0,it,"MediaItem*") then valid[#valid+1]=it end end
  if #valid==0 then update_status="Noch keine gültige von Composition Studio erzeugte Komposition zum Exportieren."; return end
  local fn=save_path_dialog("MIDI exportieren","Composition-Studio-"..os.date("%Y%m%d-%H%M%S")..".mid","mid"); if not fn then return end
