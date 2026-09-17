@@ -1,10 +1,10 @@
 -- @description Composition Studio
--- @version 0.5.14
+-- @version 0.5.15
 -- @author Klangwerke
 -- @about Dockable AI chat, controlled REAPER actions and MIDI composition.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.5.14"
+local VERSION="0.5.15"
 local EXT_SECTION="CompositionStudio"
 local PROVIDER_KEY,MODEL_KEY="AIProvider","AIModel"
 local KEY_NAMES={openai="OpenAIAPIKey",anthropic="AnthropicAPIKey",google="GoogleAPIKey"}
@@ -104,6 +104,9 @@ local function restore_diag()
 end
 restore_diag()
 local write_last_midi_to
+local ensure_title_then
+local export_last_midi
+local save_diagnosis
 local save_panel=nil
 local function begin_save_panel(kind,title,default_name,ext)
  if save_panel then update_status="Ein Speichern-Dialog ist bereits geöffnet."; return end
@@ -123,7 +126,7 @@ local function finish_save_panel()
   local raw=diag_json(); if write_file(fn,raw) then local chk=read_file(fn); if chk and #chk==#raw then persist_diag(); write_file(DIAG_CACHE_PATH,raw); update_status="Diagnose gespeichert: "..fn.." ("..tostring(#raw).." Bytes)" else update_status="Diagnose konnte nach dem Schreiben nicht verifiziert werden: "..fn end else update_status="Diagnose konnte nicht gespeichert werden: "..fn end
  elseif p.kind=="midi" then local ok,msg=write_last_midi_to(fn); update_status=msg end
 end
-local function save_diagnosis()
+save_diagnosis=function()
  if ensure_title_then("diagnosis") then return end
  begin_save_panel("diagnosis","Diagnose speichern",safe_work_title(work_title).." - Diagnose.json","json")
 end
@@ -223,7 +226,7 @@ local function existing_program(track) for i=0,reaper.CountTrackMediaItems(track
 local function program_for_name(name,proposed) local n=(name or ""):lower(); local map={{"violin",40},{"violine",40},{"geige",40},{"viola",41},{"bratsche",41},{"cello",42},{"violoncello",42},{"kontrabass",43},{"double bass",43},{"gitarre",24},{"guitar",24},{"harfe",46},{"harp",46},{"flöte",73},{"floete",73},{"flute",73},{"oboe",68},{"klarinette",71},{"clarinet",71},{"fagott",70},{"bassoon",70},{"trompete",56},{"trumpet",56},{"horn",60},{"posaune",57},{"trombone",57},{"sax",65},{"klavier",0},{"piano",0},{"orgel",19},{"organ",19}}; for _,p in ipairs(map) do if n:find(p[1],1,true) then return p[2] end end; local v=tonumber(proposed); if v and v>=0 and v<=127 then return math.floor(v) end; return 0 end
 local function create_midi(track,name,notes,program) local lo,hi=math.huge,-math.huge; for _,n in ipairs(notes) do lo=math.min(lo,n.start_qn); hi=math.max(hi,n.start_qn+n.duration_qn) end; if hi<=lo then return nil end; local item=reaper.CreateNewMIDIItemInProj(track,reaper.TimeMap2_QNToTime(0,lo),reaper.TimeMap2_QNToTime(0,hi),false); local take=item and reaper.GetActiveTake(item); if not take then return nil end; reaper.GetSetMediaItemTakeInfo_String(take,"P_NAME",name,true); local ch=math.max(0,math.min(15,(notes[1].channel or 0))); local ppq=reaper.MIDI_GetPPQPosFromProjTime(take,reaper.TimeMap2_QNToTime(0,lo)); local pg=math.max(0,math.min(127,program or 0)); reaper.MIDI_InsertCC(take,false,false,ppq,0xB0,ch,0,0); reaper.MIDI_InsertCC(take,false,false,ppq,0xB0,ch,32,0); reaper.MIDI_InsertCC(take,false,false,ppq,0xC0,ch,pg,0); for _,n in ipairs(notes) do local s=reaper.MIDI_GetPPQPosFromProjTime(take,reaper.TimeMap2_QNToTime(0,n.start_qn)); local e=reaper.MIDI_GetPPQPosFromProjTime(take,reaper.TimeMap2_QNToTime(0,n.start_qn+n.duration_qn)); reaper.MIDI_InsertNote(take,false,false,s,e,n.channel,n.pitch,n.velocity,true) end; reaper.MIDI_Sort(take); return item end
 local function apply_composition(text,items,tracks) local src,targets={},{ }; for _,it in ipairs(items) do src[it.guid]=it end; for _,t in ipairs(tracks or {}) do targets[t.guid]=t.track end; local jobs={}; for line in text:gmatch("[^\r\n]+") do local k,g,rest=trim(line):match("^CS|([^|]+)|([^|]+)|?(.*)$"); if not k then return nil,"Unerwartete Kompositionsantwort." end; if k=="unchanged" then if not src[g] then return nil,"Unbekannte Quelle." end elseif k=="revised" or k=="target" or k=="track" or k=="new" then local name,pg,nt=rest:match("^([^|]+)|(%d+)|(.+)$"); local notes=parse_notes(nt); local program=tonumber(pg); if not name or not notes or not program or program<0 or program>127 then return nil,"Ungültige Kompositionsdaten." end; if (k=="revised" or k=="target") and not src[g] then return nil,"Unbekannte Quelle." end; if k=="track" and not targets[g] then return nil,"Unbekannte Zielspur." end; if k=="new" and g~="-" then return nil,"Ungültige neue Spur." end; jobs[#jobs+1]={kind=k,guid=g,name=trim(name),program=program_for_name(name,program),notes=notes} else return nil,"Unbekannter Ergebnistyp." end end; reaper.Undo_BeginBlock2(0); local made={}; local ok,err=xpcall(function() for _,j in ipairs(jobs) do local tr; if j.kind=="revised" then local no=math.floor(reaper.GetMediaTrackInfo_Value(src[j.guid].track,"IP_TRACKNUMBER")); tr=create_track(j.name.." [Variante]",no) elseif j.kind=="target" then tr=src[j.guid].track elseif j.kind=="track" then tr=targets[j.guid] else tr=create_track(j.name) end; local inherited=(j.kind~="new") and existing_program(tr) or nil; local it=create_midi(tr,j.name,j.notes,inherited or j.program); if not it then error("MIDI konnte nicht erzeugt werden") end; made[#made+1]=it end end,debug.traceback); if not ok then reaper.Undo_EndBlock2(0,"Composition Studio – fehlgeschlagen",-1); reaper.Undo_DoUndo2(0); return nil,err end; reaper.UpdateArrange(); reaper.Undo_EndBlock2(0,"Composition Studio – KI-Komposition",-1); return made end
-local function export_last_midi()
+export_last_midi=function()
  local made=last_made; if #made==0 then made=recover_last_made() end
  local valid=0; for _,it in ipairs(made) do if reaper.ValidatePtr2(0,it,"MediaItem*") then valid=valid+1 end end
  if valid==0 then update_status="Noch keine gültige von Composition Studio erzeugte MIDI-Komposition zum Exportieren."; return end
@@ -274,7 +277,7 @@ local function title_prompt()
  local draft=last_diag.musical_draft or ""; local req=last_diag.request or ""
  return [[Gib dieser vorhandenen Komposition einen kurzen, eigenständigen Werktitel. Antworte ausschließlich mit dem Titel, ohne Anführungszeichen, ohne „Titel:“ und ohne Erläuterung. Der Titel soll musikalisch passend sein und nicht bloß Instrumente oder den Auftrag wiederholen.]].."\n\nAUFTRAG:\n"..req.."\n\nMUSIKALISCHER ENTWURF:\n"..draft
 end
-local function ensure_title_then(kind)
+ensure_title_then=function(kind)
  if safe_work_title(work_title)~="" then return false end
  local recovered=title_from_draft(last_diag.musical_draft or "",last_diag.request or "")
  if recovered~="" then work_title=recovered; reaper.SetProjExtState(0,EXT_SECTION,TITLE_KEY,work_title); diag_set("work_title",work_title); return false end
