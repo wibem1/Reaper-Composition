@@ -1,10 +1,10 @@
 -- @description Composition Studio
--- @version 0.5.6
+-- @version 0.5.7
 -- @author Klangwerke
 -- @about Dockable AI chat, controlled REAPER actions and MIDI composition.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.5.6"
+local VERSION="0.5.7"
 local EXT_SECTION="CompositionStudio"
 local PROVIDER_KEY,MODEL_KEY="AIProvider","AIModel"
 local KEY_NAMES={openai="OpenAIAPIKey",anthropic="AnthropicAPIKey",google="GoogleAPIKey"}
@@ -73,22 +73,9 @@ local function diag_json()
  local keys={"version","provider","model","request","context","controller_prompt","controller_answer","composition_prompt","musical_draft","translation_prompt","composition_answer","apply_result","halion_result"}; local a={"{\n  \"timestamp\": \""..json_escape(os.date("%Y-%m-%dT%H:%M:%S")).."\""}
  for _,k in ipairs(keys) do a[#a+1]=",\n  \""..k.."\": \""..json_escape(last_diag[k] or "").."\"" end; a[#a+1]="\n}\n"; return table.concat(a)
 end
-local function save_path_dialog(title,suggested,ext)
- -- Native macOS Save panel via AppleScript; no JS_ReaScriptAPI dependency.
- local script=os.tmpname()..".applescript"; local out=os.tmpname()..".path"
- local function aq(v) return tostring(v or ""):gsub("\\","\\\\"):gsub('"','\\"') end
- local as='try\nset f to choose file name with prompt "'..aq(title)..'" default name "'..aq(suggested)..'"\nPOSIX path of f\non error number -128\nreturn ""\nend try\n'
- if not write_file(script,as) then update_status="Speichern-Dialog konnte nicht vorbereitet werden."; return nil end
- os.execute("/usr/bin/osascript "..shell_quote(script).." > "..shell_quote(out).." 2>/dev/null")
- local fn=trim(read_file(out)); os.remove(script); os.remove(out)
- if not fn or fn=="" then return nil end
- if not fn:lower():match("%."..ext.."$") then fn=fn.."."..ext end
- return fn
-end
 local function save_diagnosis()
- local fn=save_path_dialog("Diagnose speichern","Composition-Studio-Diagnose-"..os.date("%Y%m%d-%H%M%S")..".json","json")
- if not fn then return end
- if write_file(fn,diag_json()) then update_status="Diagnose gespeichert: "..fn else update_status="Diagnose konnte nicht gespeichert werden." end
+ local base=reaper.GetResourcePath().."/Composition-Studio-Diagnose-"..os.date("%Y%m%d-%H%M%S")..".json"
+ if write_file(base,diag_json()) then update_status="Diagnose gespeichert: "..base else update_status="Diagnose konnte nicht gespeichert werden." end
 end
 local function be16(n) return string.char(math.floor(n/256)%256,n%256) end
 local function be32(n) return string.char(math.floor(n/16777216)%256,math.floor(n/65536)%256,math.floor(n/256)%256,n%256) end
@@ -106,7 +93,7 @@ end
 local function export_last_midi()
  local valid={}; for _,it in ipairs(last_made) do if it and reaper.ValidatePtr2(0,it,"MediaItem*") then valid[#valid+1]=it end end
  if #valid==0 then update_status="Noch keine gültige von Composition Studio erzeugte Komposition zum Exportieren."; return end
- local fn=save_path_dialog("MIDI exportieren","Composition-Studio-"..os.date("%Y%m%d-%H%M%S")..".mid","mid"); if not fn then return end
+ local fn=reaper.GetResourcePath().."/Composition-Studio-"..os.date("%Y%m%d-%H%M%S")..".mid"
  local ppq=960; local chunks={}; local tempo=math.max(1,reaper.Master_GetTempo()); local us=math.floor(60000000/tempo+0.5); local tempo_data=string.char(0xFF,0x51,0x03,math.floor(us/65536)%256,math.floor(us/256)%256,us%256); chunks[#chunks+1]=midi_track_chunk({{tick=0,order=0,data=tempo_data}},"Tempo")
  for _,item in ipairs(valid) do
   local take=reaper.GetActiveTake(item); if take and reaper.TakeIsMIDI(take) then
