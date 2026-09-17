@@ -1,0 +1,42 @@
+name: Apply dual MIDI export v1.0.1 corrected
+on:
+  push:
+    branches: [composition-studio]
+    paths: ['.github/workflows/apply-dual-midi-export-v101b.yml']
+permissions:
+  contents: write
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: composition-studio}
+      - name: Patch and validate
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('Composition Studio.lua'); s=p.read_text()
+          assert '-- @version 1.0.0' in s and 'local VERSION="1.0.0"' in s
+          s=s.replace('-- @version 1.0.0','-- @version 1.0.1',1).replace('local VERSION="1.0.0"','local VERSION="1.0.1"',1)
+          a='local open,input,busy=true,"",false; local last_made={}; local last_diag={};'; assert a in s; s=s.replace(a,'local open,input,busy=true,"",false; local last_made={}; local swam_last_made={}; local last_diag={};',1)
+          a='write_last_midi_to=function(fn)\n local valid={}; for _,it in ipairs(last_made) do'; assert a in s; s=s.replace(a,'write_last_midi_to=function(fn,items_override)\n local valid={}; for _,it in ipairs(items_override or last_made) do',1)
+          a='save_panel={kind=kind,script=script,out=out,done=done,ext=ext};'; assert a in s; s=s.replace(a,'save_panel={kind=kind,script=script,out=out,done=done,ext=ext,items=(kind=="swam_midi") and swam_last_made or nil};',1)
+          a='if p.kind=="diagnosis" then'; assert a in s; s=s.replace(a,'if p.kind=="swam_midi" then write_last_midi_to(fn,p.items); return end\n if p.kind=="diagnosis" then',1)
+          a='last_made=made; local gs={}; for _,it in ipairs(made) do gs[#gs+1]=item_guid(it) end; reaper.SetProjExtState(0,EXT_SECTION,"LastMadeGUIDs",table.concat(gs,"\\n")); add("KI","SWAM-Interpretation erzeugt:'; assert a in s; s=s.replace(a,'swam_last_made=made; add("KI","SWAM-Interpretation erzeugt:',1)
+          m='local function begin_swam_interpretation()'; assert m in s
+          b='local function export_swam_midi()\n if busy then return end\n local valid={}; for _,it in ipairs(swam_last_made) do if it and reaper.ValidatePtr2(0,it,"MediaItem*") then valid[#valid+1]=it end end\n if #valid==0 then update_status="Noch keine SWAM-Interpretation zum Exportieren."; return end\n swam_last_made=valid\n local base=work_title~="" and work_title or "Composition Studio"\n begin_save_panel("swam_midi","SWAM-MIDI exportieren",base.." – SWAM.mid","mid")\nend\n'
+          s=s.replace(m,b+m,1)
+          a='if reaper.ImGui_MenuItem(ctx,"SWAM interpretieren") then begin_swam_interpretation() end; if reaper.ImGui_MenuItem(ctx,"MIDI exportieren …") then export_last_midi() end;'; assert a in s; s=s.replace(a,'if reaper.ImGui_MenuItem(ctx,"SWAM interpretieren") then begin_swam_interpretation() end; if reaper.ImGui_MenuItem(ctx,"MIDI exportieren …") then export_last_midi() end; if reaper.ImGui_MenuItem(ctx,"SWAM-MIDI exportieren …") then export_swam_midi() end;',1)
+          assert 'swam_last_made=made' in s and 'write_last_midi_to=function(fn,items_override)' in s and 'SWAM-MIDI exportieren …' in s
+          p.write_text(s)
+          PY
+          sudo apt-get update -qq && sudo apt-get install -y -qq lua5.4
+          luac5.4 -p 'Composition Studio.lua'
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add 'Composition Studio.lua'
+          git commit -m 'Composition Studio 1.0.1: separate normal and SWAM MIDI export'
+          git push origin composition-studio
