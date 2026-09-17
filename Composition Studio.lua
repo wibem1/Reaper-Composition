@@ -1,10 +1,10 @@
 -- @description Composition Studio
--- @version 0.3-test15
+-- @version 0.3-test16
 -- @author Klangwerke
 -- @about Dockable AI chat, controlled REAPER actions and MIDI composition.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.3-test15"
+local VERSION="0.3-test16"
 local EXT_SECTION,EXT_KEY="CompositionStudio","OpenAIAPIKey"
 local WINDOW_STATE_KEY,HISTORY_KEY="WindowOpen","HistoryV1"
 local UPDATE_URL="https://raw.githubusercontent.com/wibem1/Reaper-Composition/composition-studio/Composition%20Studio.lua"
@@ -122,8 +122,24 @@ local function process(request)
  if answer:match("^ACTION|") then local a,e=parse_action(answer,items); if not a then add("KI","Ich führe nichts aus: "..e); return end; local ok,ae=execute_action(a); if not ok then add("KI","Die Aktion wurde nicht ausgeführt: "..tostring(ae)); return end; add("KI",trim(a.desc).." – erledigt. REAPER Undo kann die Änderung rückgängig machen."); return end; add("KI","Ich konnte den Auftrag nicht eindeutig einem sicheren Vorgang zuordnen und habe nichts verändert.")
 end
 local function submit() local r=trim(input); if r=="" or busy then return end; input=""; info_visible=false; history_mode=false; add("Du",r); busy=true; process(r); busy=false end
-local function info_text() return "AKTUELLER STAND\n\nComposition Studio arbeitet direkt in REAPER.\n\nWAS IST NEU? – "..VERSION.."\n\n• Freie Neukompositionen funktionieren ohne ausgewähltes MIDI-Item und ohne Zielspur.\n• Bei mehreren verlangten Instrumenten werden neue Spuren und MIDI-Items erzeugt.\n• Ausgewählte Spuren, MIDI-Items und Zeitbereiche bleiben optionale Ziel- und Kontextangaben.\n• Jedes neu erzeugte MIDI-Item erhält am Anfang einen Program Change; auf vorhandenen Zielspuren wird ein vorhandenes Programm bevorzugt übernommen.\n• Jede Chatnachricht kann jetzt mit einem eigenen Kopieren-Button in die Zwischenablage gelegt werden.\n\nTEST\n\nBei einer Chatnachricht auf 'Kopieren' klicken und den Text anschließend mit ⌘V in ein anderes Programm einfügen." end
-local function draw_history() if info_visible then reaper.ImGui_TextWrapped(ctx,info_text()); return end; for i=chat_start,#history do local m=history[i]; reaper.ImGui_TextWrapped(ctx,m.role..": "..m.text); if type(reaper.ImGui_SetClipboardText)=="function" then if reaper.ImGui_SmallButton(ctx,"Kopieren##msg"..i) then reaper.ImGui_SetClipboardText(ctx,m.text) end end; reaper.ImGui_Spacing(ctx) end; if history_mode then reaper.ImGui_Separator(ctx); if reaper.ImGui_Button(ctx,"Verlauf löschen") then clear_saved_history() end end end
+local function info_text() return "AKTUELLER STAND\n\nComposition Studio arbeitet direkt in REAPER.\n\nWAS IST NEU? – "..VERSION.."\n\n• Der Chattext ist jetzt schreibgeschützt, aber auswählbar.\n• Beliebige Textpassagen können markiert und mit ⌘C kopiert werden.\n• Die kopierte Passage kann unten mit ⌘V eingefügt, verändert und erneut an die KI geschickt werden.\n• Die Kompositionsfunktionen aus test14/test15 bleiben unverändert.\n\nTEST\n\nLass z.B. eine Kompositionsidee erzeugen, markiere nur einen Teil der KI-Antwort, drücke ⌘C, klicke ins Eingabefeld und füge ihn mit ⌘V ein." end
+local function draw_history()
+ if info_visible then reaper.ImGui_TextWrapped(ctx,info_text()); return end
+ local flags=0
+ if type(reaper.ImGui_InputTextFlags_ReadOnly)=="function" then flags=flags|reaper.ImGui_InputTextFlags_ReadOnly() end
+ if type(reaper.ImGui_InputTextFlags_NoHorizontalScroll)=="function" then flags=flags|reaper.ImGui_InputTextFlags_NoHorizontalScroll() end
+ for i=chat_start,#history do
+  local m=history[i]
+  reaper.ImGui_Text(ctx,m.role..":")
+  local text=m.text or ""
+  local lines=1; for _ in text:gmatch("\n") do lines=lines+1 end
+  local approx=math.max(lines,math.ceil(#text/48))
+  local height=math.max(48,math.min(220,approx*22+12))
+  reaper.ImGui_InputTextMultiline(ctx,"##chatmsg"..i,text,-1,height,flags)
+  reaper.ImGui_Spacing(ctx)
+ end
+ if history_mode then reaper.ImGui_Separator(ctx); if reaper.ImGui_Button(ctx,"Verlauf löschen") then clear_saved_history() end end
+end
 local function remember_closed() save_history(); reaper.SetExtState(EXT_SECTION,WINDOW_STATE_KEY,"0",true) end
 local function check_project_change() local p=reaper.EnumProjects(-1,""); if p~=current_project then save_history(current_project); current_project=p; load_history(current_project) end end
 local function loop() if not open then if not restarting then remember_closed() end; return end; check_project_change(); reaper.ImGui_SetNextWindowSize(ctx,360,620,reaper.ImGui_Cond_FirstUseEver()); local visible; visible,open=reaper.ImGui_Begin(ctx,SCRIPT_NAME.."###CompositionStudioMain",open); if visible then local pushed=push_font(); local items=selected_items(false); local tracks=selected_tracks(); reaper.ImGui_Text(ctx,SCRIPT_NAME.."  "..VERSION); reaper.ImGui_SameLine(ctx); if reaper.ImGui_Button(ctx,"Info") then info_visible=true; history_mode=false end; reaper.ImGui_SameLine(ctx); if reaper.ImGui_Button(ctx,"Update") then install_update() end; reaper.ImGui_Text(ctx,string.format("GPT-5.6  |  %d MIDI-Item(s) | %d Spur(en) ausgewählt",#items,#tracks)); if update_status~="" then reaper.ImGui_TextWrapped(ctx,update_status) end; reaper.ImGui_Separator(ctx); local w,h=reaper.ImGui_GetContentRegionAvail(ctx); local ih,bh=82,32; local ch=math.max(120,h-ih-bh*2-84); if reaper.ImGui_BeginChild(ctx,"##chat",w,ch,reaper.ImGui_ChildFlags_Borders()) then draw_history(); reaper.ImGui_EndChild(ctx) end; reaper.ImGui_Spacing(ctx); local changed,v=reaper.ImGui_InputTextMultiline(ctx,"##request",input,w,ih); if changed then input=v end; reaper.ImGui_Spacing(ctx); local gap=6; local bw=math.max(110,(w-gap)/2); if reaper.ImGui_Button(ctx,busy and "Warten…" or "Senden",bw,bh) and not busy then submit() end; reaper.ImGui_SameLine(ctx,0,gap); if reaper.ImGui_Button(ctx,"Verlauf",bw,bh) then chat_start=1; info_visible=false; history_mode=true end; if reaper.ImGui_Button(ctx,"Chat leeren",bw,bh) then chat_start=#history+1; info_visible=false; history_mode=false end; reaper.ImGui_SameLine(ctx,0,gap); if reaper.ImGui_Button(ctx,"Schließen",bw,bh) then open=false end; pop_font(pushed); reaper.ImGui_End(ctx) end; if open then reaper.defer(loop) elseif not restarting then remember_closed() end end
