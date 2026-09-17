@@ -1,5 +1,5 @@
 name: Release v0511
-on: workflow_dispatch
+on: push
 permissions:
   contents: write
 jobs:
