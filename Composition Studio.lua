@@ -1,10 +1,10 @@
 -- @description Composition Studio
--- @version 0.3-test4
+-- @version 0.3-test5
 -- @author Klangwerke
 -- @about Dockable AI chat, controlled REAPER actions and MIDI composition.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.3-test4"
+local VERSION="0.3-test5"
 local EXT_SECTION,EXT_KEY="CompositionStudio","OpenAIAPIKey"
 local WINDOW_STATE_KEY="WindowOpen"
 local HISTORY_KEY="HistoryV1"
@@ -48,12 +48,26 @@ local function shell_quote(s) return "'"..tostring(s):gsub("'","'\\''").."'" end
 local function json_escape(s) return tostring(s or ""):gsub("\\","\\\\"):gsub('"','\\"'):gsub("\n","\\n"):gsub("\r","\\r"):gsub("\t","\\t") end
 local function read_file(p) local f=io.open(p,"rb"); if not f then return nil end; local s=f:read("*a"); f:close(); return s end
 local function write_file(p,s) local f=io.open(p,"wb"); if not f then return false end; f:write(s); f:close(); return true end
-local function utf8(cp) if cp<=0x7f then return string.char(cp) elseif cp<=0x7ff then return string.char(0xc0+math.floor(cp/64),0x80+cp%64) elseif cp<=0xffff then return string.char(0xe0+math.floor(cp/4096),0x80+math.floor(cp/64)%64,0x80+cp%64) else return string.char(0xf0+math.floor(cp/262144),0x80+math.floor(cp/4096)%64,0x80+math.floor(cp/64)%64,0x80+cp%64) end end
+local function utf8(cp) if cp<=0x7f then return string.char(cp) elseif cp<=0x7ff then return string.char(0xc0+math.floor(cp/64),0x80+cp%64) elseif cp<=0xffff then return string.char(0xe0+math.floor(cp/4096),0x80+math.floor(cp/64)%64,0x80+cp%64) else return string.char(0xf0+math.floor(cp/262144),0x80+math.floor(cp/4096)%64,0x80+cp%64) end end
 local function read_json_string(raw,q)
  local out,i={},q+1
- while i<=#raw do local c=raw:sub(i,i); if c=='"' then return table.concat(out) end
-  if c=="\\" then i=i+1; local e=raw:sub(i,i); if e=="n" then out[#out+1]="\n" elseif e=="r" then out[#out+1]="\r" elseif e=="t" then out[#out+1]="\t" elseif e=='"' then out[#out+1]='"' elseif e=="\\" then out[#out+1]="\\" elseif e=="u" then local h=raw:sub(i+1,i+4); local cp=tonumber(h,16); if cp then i=i+4; out[#out+1]=utf8(cp) end else out[#out+1]=e end else out[#out+1]=c end; i=i+1 end
+ while i<=#raw do
+  local c=raw:sub(i,i)
+  if c=='"' then return table.concat(out) end
+  if c=="\\" then
+   i=i+1
+   local e=raw:sub(i,i)
+   if e=="n" then out[#out+1]="\n"
+   elseif e=="r" then out[#out+1]="\r"
+   elseif e=="t" then out[#out+1]="\t"
+   elseif e=='"' then out[#out+1]='"'
+   elseif e=="\\" then out[#out+1]="\\"
+   elseif e=="u" then local h=raw:sub(i+1,i+4); local cp=tonumber(h,16); if cp then i=i+4; out[#out+1]=utf8(cp) end
+   else out[#out+1]=e end
+  else out[#out+1]=c end
+  i=i+1
  end
+ return table.concat(out)
 end
 local function response_text(raw)
  local s,e=raw:find('"type"%s*:%s*"output_text"'); if not s then return nil end; local ts,te=raw:find('"text"%s*:',e+1); if not ts then return nil end; local q=raw:find('"',te+1,true); return q and read_json_string(raw,q) or nil
@@ -176,7 +190,7 @@ local function process(request)
 end
 local function submit() local r=trim(input); if r=="" or busy then return end; input=""; info_visible=false; add("Du",r); busy=true; process(r); busy=false end
 local function info_text()
- return "AKTUELLER STAND\n\nComposition Studio arbeitet direkt in REAPER. GPT-5.6 nutzt den Dialog und ausgewählte MIDI-Items als Kontext. Es kann MIDI analysieren und bearbeiten, Varianten bzw. neue MIDI-Items erzeugen sowie freigegebene REAPER-Aktionen ausführen. Änderungen lassen sich mit REAPER Undo rückgängig machen.\n\nWAS IST NEU? – "..VERSION.."\n\n• Composition Studio ist als schmale REAPER-Seitenleiste ausgelegt; die Standardbreite wurde deutlich reduziert.\n• Das Eingabefeld ist kompakter und lässt mehr Platz für REAPER und den Chatverlauf.\n• Info erscheint direkt im Chatfeld.\n• Das sichtbare Chatfeld kann geleert werden, ohne den gespeicherten Projektverlauf zu löschen.\n• Composition Studio merkt sich weiterhin, ob sein Fenster geöffnet war, und öffnet es beim nächsten REAPER-Start automatisch wieder.\n• Der Verlauf bleibt projektbezogen gespeichert.\n\nIN DIESER VERSION BITTE TESTEN\n\n• Seitenleiste: Composition Studio soll wesentlich weniger REAPER-Arbeitsfläche beanspruchen.\n• Eingabefeld: ungefähr drei bis vier Textzeilen hoch und weiterhin gut benutzbar.\n• Info: Text erscheint direkt im Chatfeld.\n• Chat leeren: sichtbarer Chat wird leer, gespeicherter Projektverlauf bleibt erhalten.\n• REAPER mit geöffnetem Composition Studio neu starten: Composition Studio soll automatisch wieder erscheinen.\n• Projekt speichern und neu öffnen: Verlauf soll wieder vorhanden sein.\n• Prüfen, ob "..VERSION.." angezeigt wird."
+ return "AKTUELLER STAND\n\nComposition Studio arbeitet direkt in REAPER. GPT-5.6 nutzt den Dialog und ausgewählte MIDI-Items als Kontext. Es kann MIDI analysieren und bearbeiten, Varianten bzw. neue MIDI-Items erzeugen sowie freigegebene REAPER-Aktionen ausführen. Änderungen lassen sich mit REAPER Undo rückgängig machen.\n\nWAS IST NEU? – "..VERSION.."\n\n• Parserfehler aus 0.3-test4 behoben.\n• Composition Studio ist als schmale REAPER-Seitenleiste ausgelegt; die Standardbreite wurde deutlich reduziert.\n• Das Eingabefeld ist kompakter und lässt mehr Platz für REAPER und den Chatverlauf.\n• Info erscheint direkt im Chatfeld.\n• Das sichtbare Chatfeld kann geleert werden, ohne den gespeicherten Projektverlauf zu löschen.\n• Composition Studio merkt sich weiterhin, ob sein Fenster geöffnet war, und öffnet es beim nächsten REAPER-Start automatisch wieder.\n• Der Verlauf bleibt projektbezogen gespeichert.\n\nIN DIESER VERSION BITTE TESTEN\n\n• Start: Composition Studio muss ohne ReaScript-Parserfehler öffnen.\n• Seitenleiste: Composition Studio soll wesentlich weniger REAPER-Arbeitsfläche beanspruchen.\n• Eingabefeld: ungefähr drei bis vier Textzeilen hoch und weiterhin gut benutzbar.\n• Info: Text erscheint direkt im Chatfeld.\n• Chat leeren: sichtbarer Chat wird leer, gespeicherter Projektverlauf bleibt erhalten.\n• REAPER mit geöffnetem Composition Studio neu starten: Composition Studio soll automatisch wieder erscheinen.\n• Projekt speichern und neu öffnen: Verlauf soll wieder vorhanden sein.\n• Prüfen, ob "..VERSION.." angezeigt wird."
 end
 local function draw_history()
  if info_visible then reaper.ImGui_TextWrapped(ctx,info_text()); return end
