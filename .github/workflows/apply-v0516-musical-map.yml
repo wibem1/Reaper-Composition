@@ -1,0 +1,49 @@
+name: Apply Composition Studio v0.5.16 musical map
+on: push
+permissions:
+  contents: write
+jobs:
+  migrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: composition-studio
+      - name: Patch script
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('Composition Studio.lua')
+          s=p.read_text()
+          s=s.replace('-- @version 0.5.15','-- @version 0.5.16',1).replace('local VERSION="0.5.15"','local VERSION="0.5.16"',1)
+          old='''Erzeuge für jedes Instrument genau eine Zeile:\nCS|new|-|NAME|PROGRAM|startQN,durationQN,pitch,velocity,channel;...\nPROGRAM ist General MIDI 0-127. startQN und durationQN dürfen beliebige sinnvolle Dezimalwerte haben. Antworte ausschließlich mit CS-Zeilen.'''
+          new='''Übertrage zusätzlich alle im Entwurf ausdrücklich vorgesehenen Tempo- und Taktartwechsel. Verwende dafür vor den Instrumentzeilen bei Bedarf:\nCSMETA|tempo|startQN|BPM\nCSMETA|timesig|startQN|ZAEHLER|NENNER\nWenn der Entwurf nur ein Anfangstempo oder eine Anfangstaktart nennt, setze startQN=0. Erfinde keine Wechsel, die im Entwurf nicht vorgesehen sind.\nErzeuge danach für jedes Instrument genau eine Zeile:\nCS|new|-|NAME|PROGRAM|startQN,durationQN,pitch,velocity,channel;...\nPROGRAM ist General MIDI 0-127. startQN und durationQN dürfen beliebige sinnvolle Dezimalwerte haben. Antworte ausschließlich mit CSMETA- und CS-Zeilen.'''
+          assert old in s
+          s=s.replace(old,new,1)
+          old2='''local function apply_composition(text,items,tracks) local src,targets={},{ }; for _,it in ipairs(items) do src[it.guid]=it end; for _,t in ipairs(tracks or {}) do targets[t.guid]=t.track end; local jobs={}; for line in text:gmatch("[^\\r\\n]+") do local k,g,rest=trim(line):match("^CS|([^|]+)|([^|]+)|?(.*)$"); if not k then return nil,"Unerwartete Kompositionsantwort." end;'''
+          new2='''local function apply_composition(text,items,tracks) local src,targets={},{ }; for _,it in ipairs(items) do src[it.guid]=it end; for _,t in ipairs(tracks or {}) do targets[t.guid]=t.track end; local jobs={}; local musical_map={}; for line in text:gmatch("[^\\r\\n]+") do line=trim(line); local mt,q,bpm=line:match("^CSMETA|(tempo)|([^|]+)|([^|]+)$"); local ms,mq,num,den=line:match("^CSMETA|(timesig)|([^|]+)|([^|]+)|([^|]+)$"); if mt then q,bpm=tonumber(q),tonumber(bpm); if not q or not bpm or q<0 or bpm<=0 then return nil,"Ungültige Tempoangabe." end; musical_map[#musical_map+1]={kind="tempo",qn=q,bpm=bpm} elseif ms then mq,num,den=tonumber(mq),tonumber(num),tonumber(den); if not mq or not num or not den or mq<0 or num<1 or den<1 then return nil,"Ungültige Taktartangabe." end; musical_map[#musical_map+1]={kind="timesig",qn=mq,num=math.floor(num),den=math.floor(den)} else local k,g,rest=line:match("^CS|([^|]+)|([^|]+)|?(.*)$"); if not k then return nil,"Unerwartete Kompositionsantwort." end;'''
+          assert old2 in s
+          s=s.replace(old2,new2,1)
+          old3='''else return nil,"Unbekannter Ergebnistyp." end end; reaper.Undo_BeginBlock2(0); local made={}; local ok,err=xpcall(function() for _,j in ipairs(jobs) do'''
+          new3='''else return nil,"Unbekannter Ergebnistyp." end end end; reaper.Undo_BeginBlock2(0); local made={}; local ok,err=xpcall(function() if #musical_map>0 then for i=reaper.CountTempoTimeSigMarkers(0)-1,0,-1 do reaper.DeleteTempoTimeSigMarker(0,i) end; table.sort(musical_map,function(a,b) return a.qn<b.qn end); local cur_bpm=reaper.Master_GetTempo(); local cur_num,cur_den=4,4; for _,m in ipairs(musical_map) do if m.kind=="tempo" then cur_bpm=m.bpm else cur_num,cur_den=m.num,m.den end; local tm=reaper.TimeMap2_QNToTime(0,m.qn); reaper.SetTempoTimeSigMarker(0,-1,tm,-1,-1,cur_bpm,cur_num,cur_den,false) end end; for _,j in ipairs(jobs) do'''
+          assert old3 in s
+          s=s.replace(old3,new3,1)
+          old4='''local ppq=960; local chunks={}; local tempo=math.max(1,reaper.Master_GetTempo()); local us=math.floor(60000000/tempo+0.5); local tempo_data=string.char(0xFF,0x51,0x03,math.floor(us/65536)%256,math.floor(us/256)%256,us%256); chunks[#chunks+1]=midi_track_chunk({{tick=0,order=0,data=tempo_data}},"Tempo")'''
+          new4='''local ppq=960; local chunks={}; local map_events={}; local count=reaper.CountTempoTimeSigMarkers(0); if count==0 then local tempo=math.max(1,reaper.Master_GetTempo()); local us=math.floor(60000000/tempo+0.5); map_events[#map_events+1]={tick=0,order=0,data=string.char(0xFF,0x51,0x03,math.floor(us/65536)%256,math.floor(us/256)%256,us%256)}; map_events[#map_events+1]={tick=0,order=1,data=string.char(0xFF,0x58,0x04,4,2,24,8)} else for i=0,count-1 do local ok,timepos,_,_,bpm,num,den=reaper.GetTempoTimeSigMarker(0,i); if ok then local qn=reaper.TimeMap2_timeToQN(0,timepos); local tick=math.max(0,math.floor(qn*ppq+0.5)); local us=math.floor(60000000/math.max(1,bpm)+0.5); local dd=0; local d=math.max(1,den); while d>1 do d=math.floor(d/2); dd=dd+1 end; map_events[#map_events+1]={tick=tick,order=0,data=string.char(0xFF,0x51,0x03,math.floor(us/65536)%256,math.floor(us/256)%256,us%256)}; map_events[#map_events+1]={tick=tick,order=1,data=string.char(0xFF,0x58,0x04,math.max(1,num),dd,24,8)} end end end; chunks[#chunks+1]=midi_track_chunk(map_events,"Tempo & Takt")'''
+          assert old4 in s
+          s=s.replace(old4,new4,1)
+          p.write_text(s)
+      - name: Structural checks
+        run: |
+          grep -q '@version 0.5.16' 'Composition Studio.lua'
+          grep -q 'CSMETA|tempo' 'Composition Studio.lua'
+          grep -q 'CountTempoTimeSigMarkers' 'Composition Studio.lua'
+          grep -q '0x58' 'Composition Studio.lua'
+      - name: Commit migration
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add 'Composition Studio.lua'
+          git commit -m 'Composition Studio v0.5.16: preserve tempo and meter map' || exit 0
+          git push origin HEAD:composition-studio
