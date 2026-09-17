@@ -1,10 +1,10 @@
 -- @description Composition Studio
--- @version 0.3-test8
+-- @version 0.3-test9
 -- @author Klangwerke
 -- @about Dockable AI chat, controlled REAPER actions and MIDI composition.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.3-test8"
+local VERSION="0.3-test9"
 local EXT_SECTION,EXT_KEY="CompositionStudio","OpenAIAPIKey"
 local WINDOW_STATE_KEY="WindowOpen"
 local HISTORY_KEY="HistoryV1"
