@@ -1,10 +1,10 @@
 -- @description Composition Studio
--- @version 0.5.4
+-- @version 0.5.5
 -- @author Klangwerke
 -- @about Dockable AI chat, controlled REAPER actions and MIDI composition.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.5.4"
+local VERSION="0.5.5"
 local EXT_SECTION="CompositionStudio"
 local PROVIDER_KEY,MODEL_KEY="AIProvider","AIModel"
 local KEY_NAMES={openai="OpenAIAPIKey",anthropic="AnthropicAPIKey",google="GoogleAPIKey"}
@@ -73,20 +73,47 @@ local function diag_json()
  local keys={"version","provider","model","request","context","controller_prompt","controller_answer","composition_prompt","musical_draft","translation_prompt","composition_answer","apply_result","halion_result"}; local a={"{\n  \"timestamp\": \""..json_escape(os.date("%Y-%m-%dT%H:%M:%S")).."\""}
  for _,k in ipairs(keys) do a[#a+1]=",\n  \""..k.."\": \""..json_escape(last_diag[k] or "").."\"" end; a[#a+1]="\n}\n"; return table.concat(a)
 end
+local function save_path_dialog(title,suggested,ext)
+ local filter=ext=="mid" and "MIDI files (*.mid)" or "JSON files (*.json)"
+ local ok,fn=reaper.JS_Dialog_BrowseForSaveFile(title,"",suggested,filter)
+ if not ok or not fn or fn=="" then return nil end
+ if not fn:lower():match("%."..ext.."$") then fn=fn.."."..ext end
+ return fn
+end
 local function save_diagnosis()
- local suggested="Composition-Studio-Diagnose-"..os.date("%Y%m%d-%H%M%S")..".json"
- local ok,fn=reaper.GetUserFileNameForWrite(suggested,"Diagnose speichern","json")
- if not ok or not fn or fn=="" then return end
- if not fn:lower():match("%.json$") then fn=fn..".json" end
+ if type(reaper.JS_Dialog_BrowseForSaveFile)~="function" then update_status="Speichern-Dialog benötigt JS_ReaScriptAPI."; return end
+ local fn=save_path_dialog("Diagnose speichern","Composition-Studio-Diagnose-"..os.date("%Y%m%d-%H%M%S")..".json","json")
+ if not fn then return end
  if write_file(fn,diag_json()) then update_status="Diagnose gespeichert: "..fn else update_status="Diagnose konnte nicht gespeichert werden." end
 end
+local function be16(n) return string.char(math.floor(n/256)%256,n%256) end
+local function be32(n) return string.char(math.floor(n/16777216)%256,math.floor(n/65536)%256,math.floor(n/256)%256,n%256) end
+local function vlq(n)
+ n=math.max(0,math.floor(n+0.5)); local b={n%128}; n=math.floor(n/128)
+ while n>0 do table.insert(b,1,128+n%128); n=math.floor(n/128) end
+ local a={}; for _,v in ipairs(b) do a[#a+1]=string.char(v) end; return table.concat(a)
+end
+local function midi_track_chunk(events,name)
+ table.sort(events,function(a,b) if a.tick~=b.tick then return a.tick<b.tick end return a.order<b.order end)
+ local out={vlq(0),string.char(0xFF,0x03,#name),name}; local last=0
+ for _,e in ipairs(events) do out[#out+1]=vlq(e.tick-last); out[#out+1]=e.data; last=e.tick end
+ out[#out+1]=vlq(0)..string.char(0xFF,0x2F,0); local d=table.concat(out); return "MTrk"..be32(#d)..d
+end
 local function export_last_midi()
- if #last_made==0 then update_status="Noch keine von Composition Studio erzeugte Komposition zum Exportieren."; return end
- reaper.Main_OnCommand(40289,0) -- unselect all items
- for _,it in ipairs(last_made) do if it and reaper.ValidatePtr(it,"MediaItem*") then reaper.SetMediaItemSelected(it,true) end end
- reaper.UpdateArrange()
- -- REAPERs eigener MIDI-Exportdialog: Dateiname/Speicherort und Mehrspur-Optionen bleiben sichtbar.
- reaper.Main_OnCommand(40849,0)
+ if type(reaper.JS_Dialog_BrowseForSaveFile)~="function" then update_status="Speichern-Dialog benötigt JS_ReaScriptAPI."; return end
+ local valid={}; for _,it in ipairs(last_made) do if it and reaper.ValidatePtr2(0,it,"MediaItem*") then valid[#valid+1]=it end end
+ if #valid==0 then update_status="Noch keine gültige von Composition Studio erzeugte Komposition zum Exportieren."; return end
+ local fn=save_path_dialog("MIDI exportieren","Composition-Studio-"..os.date("%Y%m%d-%H%M%S")..".mid","mid"); if not fn then return end
+ local ppq=960; local chunks={}; local tempo=math.max(1,reaper.Master_GetTempo()); local us=math.floor(60000000/tempo+0.5); local tempo_data=string.char(0xFF,0x51,0x03,math.floor(us/65536)%256,math.floor(us/256)%256,us%256); chunks[#chunks+1]=midi_track_chunk({{tick=0,order=0,data=tempo_data}},"Tempo")
+ for _,item in ipairs(valid) do
+  local take=reaper.GetActiveTake(item); if take and reaper.TakeIsMIDI(take) then
+   local _,name=reaper.GetSetMediaItemTakeInfo_String(take,"P_NAME","",false); name=name~="" and name or "MIDI"; local ev={}; local _,nc,cc=reaper.MIDI_CountEvts(take)
+   for i=0,(cc or 0)-1 do local ok,_,mut,pp,typ,ch,m2,m3=reaper.MIDI_GetCC(take,i); if ok and not mut then local tm=reaper.MIDI_GetProjTimeFromPPQPos(take,pp); local q=reaper.TimeMap2_timeToQN(0,tm); local tick=math.max(0,math.floor(q*ppq+0.5)); if typ==0xC0 then ev[#ev+1]={tick=tick,order=0,data=string.char(0xC0+(ch or 0),m2 or 0)} elseif typ==0xB0 then ev[#ev+1]={tick=tick,order=0,data=string.char(0xB0+(ch or 0),m2 or 0,m3 or 0)} end end end
+   for i=0,(nc or 0)-1 do local ok,_,mut,sn,en,ch,pit,vel=reaper.MIDI_GetNote(take,i); if ok and not mut then local st=reaper.MIDI_GetProjTimeFromPPQPos(take,sn); local et=reaper.MIDI_GetProjTimeFromPPQPos(take,en); local ta=math.max(0,math.floor(reaper.TimeMap2_timeToQN(0,st)*ppq+0.5)); local tb=math.max(ta+1,math.floor(reaper.TimeMap2_timeToQN(0,et)*ppq+0.5)); ev[#ev+1]={tick=ta,order=2,data=string.char(0x90+ch,pit,vel)}; ev[#ev+1]={tick=tb,order=1,data=string.char(0x80+ch,pit,0)} end end
+   chunks[#chunks+1]=midi_track_chunk(ev,name)
+  end
+ end
+ local smf="MThd"..be32(6)..be16(1)..be16(#chunks)..be16(ppq)..table.concat(chunks); if write_file(fn,smf) then update_status="MIDI gespeichert: "..fn else update_status="MIDI konnte nicht gespeichert werden." end
 end
 local function first_text_field(raw) local ts,te=(raw or ""):find('"text"%s*:'); if not ts then return nil end; local q=raw:find('"',te+1,true); return q and read_json_string(raw,q) or nil end
 local function run_ai(prompt,key)
