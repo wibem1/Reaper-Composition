@@ -11,8 +11,7 @@ local function begin_save_panel(kind,title,default_name,ext)
  local as='try\nset f to choose file name with prompt "'..aq(title)..'" default name "'..aq(default_name)..'"\nreturn POSIX path of f\non error number -128\nreturn ""\nend try\n'
  if not write_file(script,as) then update_status="Speichern-Dialog konnte nicht vorbereitet werden."; return end
  local cmd="(/usr/bin/osascript "..shell_quote(script).." > "..shell_quote(out).." 2>/dev/null; echo done > "..shell_quote(done)..") &"
- os.execute(cmd)
- save_panel={kind=kind,script=script,out=out,done=done,ext=ext}; update_status="Speicherort wählen …"
+ os.execute(cmd); save_panel={kind=kind,script=script,out=out,done=done,ext=ext}; update_status="Speicherort wählen …"
 end
 local function finish_save_panel()
  if not save_panel or not read_file(save_panel.done) then return end
@@ -27,13 +26,12 @@ s=s[:a]+new+s[b:]
 a=s.index('local function save_diagnosis()'); b=s.index('\nlocal function be16',a)
 s=s[:a]+'''local function save_diagnosis()\n begin_save_panel("diagnosis","Diagnose speichern","Composition-Studio-Diagnose-"..os.date("%Y%m%d-%H%M%S")..".json","json")\nend\n'''+s[b:]
 s=s.replace('local function export_last_midi()','local function write_last_midi_to(fn)',1)
-old=' local fn=choose_save_path("MIDI exportieren","Composition-Studio-"..os.date("%Y%m%d-%H%M%S")..".mid","mid"); if not fn then update_status="Export abgebrochen."; return end; '
+old=' local fn=choose_save_path("MIDI exportieren","Composition-Studio-"..os.date("%Y%m%d-%H%M%S")..".mid","mid"); if not fn then update_status="MIDI-Export abgebrochen."; return end'
 if old not in s: raise SystemExit('export path block not found')
-s=s.replace(old,' ',1)
+s=s.replace(old,'',1)
 s=s.replace('update_status="MIDI exportiert: "..fn.." ("..tostring(tracks).." Spuren, "..tostring(#chk).." Bytes)"','return true,"MIDI exportiert: "..fn.." ("..tostring(tracks).." Spuren, "..tostring(#chk).." Bytes)"',1)
 s=s.replace('update_status="MIDI-Datei wurde geschrieben, ist aber ungültig: "..fn','return false,"MIDI-Datei wurde geschrieben, ist aber ungültig: "..fn',1)
 s=s.replace('update_status="MIDI-Datei konnte nicht geschrieben werden: "..fn','return false,"MIDI-Datei konnte nicht geschrieben werden: "..fn',1)
-s=s.replace('update_status="Noch keine gültige von Composition Studio erzeugte MIDI-Komposition zum Exportieren."; return','return false,"Noch keine gültige von Composition Studio erzeugte MIDI-Komposition zum Exportieren."',1)
 pos=s.index('local function analysis_prompt(')
 launcher='''local function export_last_midi()\n local made=last_made; if #made==0 then made=recover_last_made() end\n local valid=0; for _,it in ipairs(made) do if reaper.ValidatePtr2(0,it,"MediaItem*") then valid=valid+1 end end\n if valid==0 then update_status="Noch keine gültige von Composition Studio erzeugte MIDI-Komposition zum Exportieren."; return end\n begin_save_panel("midi","MIDI exportieren","Composition-Studio-"..os.date("%Y%m%d-%H%M%S")..".mid","mid")\nend\n'''
 s=s[:pos]+launcher+s[pos:]
