@@ -1,10 +1,10 @@
 -- @description Composition Studio
--- @version 0.5.8
+-- @version 0.5.9
 -- @author Klangwerke
 -- @about Dockable AI chat, controlled REAPER actions and MIDI composition.
 
 local SCRIPT_NAME="Composition Studio"
-local VERSION="0.5.8"
+local VERSION="0.5.9"
 local EXT_SECTION="CompositionStudio"
 local PROVIDER_KEY,MODEL_KEY="AIProvider","AIModel"
 local KEY_NAMES={openai="OpenAIAPIKey",anthropic="AnthropicAPIKey",google="GoogleAPIKey"}
@@ -91,10 +91,17 @@ local function restore_diag()
 end
 restore_diag()
 local function choose_save_path(title,default_name,ext)
- local ok,fn=reaper.GetUserFileNameForWrite("",title,ext)
- if not ok or not fn or fn=="" then return nil end
- if not fn:lower():match("%."..ext.."$") then fn=fn.."."..ext end
- return fn
+ if reaper.JS_Dialog_BrowseForSaveFile then
+  local rv,fn=reaper.JS_Dialog_BrowseForSaveFile(title,reaper.GetResourcePath(),default_name,"*."..ext)
+  if rv and rv~=0 and fn and fn~="" then if not fn:lower():match("%."..ext.."$") then fn=fn.."."..ext end; return fn end
+  return nil
+ end
+ local ok,name=reaper.GetUserInputs(title,1,"Dateiname:,extrawidth=260",default_name)
+ if not ok then return nil end
+ name=trim(name):gsub("[/\\:]","-")
+ if name=="" then return nil end
+ if not name:lower():match("%."..ext.."$") then name=name.."."..ext end
+ return reaper.GetResourcePath().."/"..name
 end
 local function save_diagnosis()
  local fn=choose_save_path("Diagnose speichern","Composition-Studio-Diagnose-"..os.date("%Y%m%d-%H%M%S")..".json","json")
