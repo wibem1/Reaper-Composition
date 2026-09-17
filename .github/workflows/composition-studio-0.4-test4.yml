@@ -22,12 +22,14 @@ jobs:
           assert 'local VERSION="0.4-test3"' in s
           s=s.replace('-- @version 0.4-test3','-- @version 0.4-test4',1)
           s=s.replace('local VERSION="0.4-test3"','local VERSION="0.4-test4"',1)
-          old="Eine vollständige Neukomposition benötigt weder ein vorhandenes MIDI-Item noch eine ausgewählte Spur; ein klarer Auftrag wie 'Erstelle ein Stück für Violine und Gitarre' ist NEED_MUSIC. Für Analyse des Notenmaterials:"
-          new="Eine vollständige Neukomposition benötigt weder ein vorhandenes MIDI-Item noch eine ausgewählte Spur. Eine vorhandene REAPER-Auswahl oder TIME_SELECTION ist zunächst nur verfügbarer Kontext und darf einen sprachlich eindeutigen Auftrag wie 'Erstelle ein Stück für Violine und Gitarre' nicht automatisch in eine Bearbeitung verwandeln. Nur wenn der Benutzer sprachlich auf vorhandenes Material, Auswahl, Spur, Item, markierten Bereich, Fortsetzung oder Bearbeitung Bezug nimmt, ist die Auswahl als Ziel zu behandeln. Ein eindeutiger eigenständiger Neukompositionsauftrag ist NEED_NEW. Für Analyse des Notenmaterials:"
+          old="Eine vollständige Neukomposition benötigt weder ein vorhandenes MIDI-Item noch eine ausgewählte Spur; ein klarer Auftrag wie 'Erstelle ein Stück für Violine und Gitarre' ist NEED_MUSIC. Für Analyse des Notenmaterials: NEED_ANALYSIS. Für Komposition, Variation, Fortsetzung, Ergänzung oder musikalische Bearbeitung mit neuem MIDI: NEED_MUSIC. Für normale Unterhaltung: CHAT."
+          new="Eine vollständige Neukomposition benötigt weder ein vorhandenes MIDI-Item noch eine ausgewählte Spur. Eine vorhandene REAPER-Auswahl oder TIME_SELECTION ist zunächst nur verfügbarer Kontext und darf einen sprachlich eindeutigen Auftrag wie 'Erstelle ein Stück für Violine und Gitarre' nicht automatisch in eine Bearbeitung verwandeln. Nur wenn der Benutzer sprachlich auf vorhandenes Material, Auswahl, Spur, Item, markierten Bereich, Fortsetzung oder Bearbeitung Bezug nimmt, ist die Auswahl als Ziel zu behandeln. Ein eindeutiger eigenständiger Neukompositionsauftrag ist NEED_NEW. Für Analyse des Notenmaterials: NEED_ANALYSIS. Für Komposition mit ausgewähltem Material, Variation, Fortsetzung, Ergänzung oder musikalische Bearbeitung mit neuem MIDI: NEED_MUSIC. Für normale Unterhaltung: CHAT."
           assert old in s
           s=s.replace(old,new,1)
-          s=s.replace('NEED_MUSIC|Begründung\\nNur angebotene IDs verwenden.','NEED_MUSIC|Begründung\\nNEED_NEW|Begründung\\nNur angebotene IDs verwenden.',1)
-          s=s.replace('Für Komposition, Variation, Fortsetzung, Ergänzung oder musikalische Bearbeitung mit neuem MIDI: NEED_MUSIC.','Für eigenständige Neukomposition ohne sprachlichen Bezug auf vorhandenes Material: NEED_NEW. Für Komposition mit ausgewähltem Material, Variation, Fortsetzung, Ergänzung oder musikalische Bearbeitung mit neuem MIDI: NEED_MUSIC.',1)
+          oldfmt='NEED_ANALYSIS|Begründung\\nNEED_MUSIC|Begründung\\nNur angebotene IDs verwenden.'
+          newfmt='NEED_ANALYSIS|Begründung\\nNEED_MUSIC|Begründung\\nNEED_NEW|Begründung\\nNur angebotene IDs verwenden.'
+          assert oldfmt in s
+          s=s.replace(oldfmt,newfmt,1)
           old2='local why=answer:match("^NEED_MUSIC|(.*)$"); if why then local full=selected_items(true);'
           new2='local newwhy=answer:match("^NEED_NEW|(.*)$"); local why=answer:match("^NEED_MUSIC|(.*)$"); if newwhy or why then local full=newwhy and {} or selected_items(true); if newwhy then tracks={} end;'
           assert old2 in s
@@ -36,6 +38,11 @@ jobs:
           assert 'local VERSION="0.4-test4"' in s
           assert 'NEED_NEW|Begründung' in s
           assert 'local full=newwhy and {} or selected_items(true)' in s
+      - name: Static checks
+        run: |
+          grep -q 'local VERSION="0.4-test4"' 'Composition Studio.lua'
+          grep -q 'NEED_NEW|Begründung' 'Composition Studio.lua'
+          grep -q 'local full=newwhy and {} or selected_items(true)' 'Composition Studio.lua'
       - name: Commit source
         run: |
           git config user.name "Composition Studio Builder"
