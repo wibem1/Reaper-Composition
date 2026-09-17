@@ -1,0 +1,48 @@
+name: Release v0512
+on: push
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: composition-studio
+      - name: Patch lexical scope errors
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('Composition Studio.lua')
+          s=p.read_text()
+          s=s.replace('-- @version 0.5.11','-- @version 0.5.12',1).replace('local VERSION="0.5.11"','local VERSION="0.5.12"',1)
+          # Forward-declare the MIDI writer because finish_save_panel is defined before it.
+          marker='local save_panel=nil\n'
+          if marker not in s: raise SystemExit('save panel marker missing')
+          s=s.replace(marker,'local write_last_midi_to\nlocal save_panel=nil\n',1)
+          s=s.replace('local function write_last_midi_to(fn)','write_last_midi_to=function(fn)',1)
+          # recover_last_made is defined before item_guid; do not depend on the later local helper.
+          old='for i=0,reaper.CountMediaItems(0)-1 do local it=reaper.GetMediaItem(0,i); if wanted[item_guid(it)] then found[#found+1]=it end end'
+          new='for i=0,reaper.CountMediaItems(0)-1 do local it=reaper.GetMediaItem(0,i); local ok,g=reaper.GetSetMediaItemInfo_String(it,"GUID","",false); if ok and wanted[g] then found[#found+1]=it end end'
+          if old not in s: raise SystemExit('recover block missing')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+      - name: Verify Lua and preserved architecture
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq lua5.4
+          luac5.4 -p 'Composition Studio.lua'
+          grep -q -- '-- @version 0.5.12' 'Composition Studio.lua'
+          grep -q 'local VERSION="0.5.12"' 'Composition Studio.lua'
+          grep -q 'local write_last_midi_to' 'Composition Studio.lua'
+          grep -q 'write_last_midi_to=function' 'Composition Studio.lua'
+          grep -q 'choose file name' 'Composition Studio.lua'
+          grep -q 'midi_translation_prompt' 'Composition Studio.lua'
+          grep -q 'musical_draft' 'Composition Studio.lua'
+      - name: Publish
+        run: |
+          git config user.name wibem1
+          git config user.email wibem1@googlemail.com
+          git add 'Composition Studio.lua'
+          git commit -m 'Composition Studio v0.5.12 fix save/export lexical scope'
+          git push origin HEAD:composition-studio
