@@ -1,0 +1,48 @@
+name: Release v0515
+on: push
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: composition-studio
+      - name: Fix Lua scope
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('Composition Studio.lua'); s=p.read_text()
+          s=s.replace('-- @version 0.5.14','-- @version 0.5.15',1).replace('local VERSION="0.5.14"','local VERSION="0.5.15"',1)
+          # Forward declarations are required because save_diagnosis/export_last_midi are defined before the title helper.
+          marker='local write_last_midi_to\n'
+          if marker not in s: raise SystemExit('forward marker missing')
+          s=s.replace(marker,marker+'local ensure_title_then\nlocal export_last_midi\nlocal save_diagnosis\n',1)
+          # Convert early/later local function declarations to assignments to the forward-declared locals.
+          s=s.replace('local function save_diagnosis()','save_diagnosis=function()',1)
+          # close save_diagnosis assignment: first occurrence after its start
+          a=s.index('save_diagnosis=function()'); b=s.index('\nend',a); s=s[:b]+s[b:].replace('\nend','\nend',1)
+          s=s.replace('local function export_last_midi()','export_last_midi=function()',1)
+          s=s.replace('local function ensure_title_then(kind)','ensure_title_then=function(kind)',1)
+          p.write_text(s)
+          PY
+      - name: Verify Lua and scope
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq lua5.4
+          luac5.4 -p 'Composition Studio.lua'
+          grep -q -- '-- @version 0.5.15' 'Composition Studio.lua'
+          grep -q 'local VERSION="0.5.15"' 'Composition Studio.lua'
+          grep -q '^local ensure_title_then$' 'Composition Studio.lua'
+          grep -q '^ensure_title_then=function(kind)' 'Composition Studio.lua'
+          grep -q '^export_last_midi=function()' 'Composition Studio.lua'
+          grep -q '^save_diagnosis=function()' 'Composition Studio.lua'
+          grep -q 'midi_translation_prompt' 'Composition Studio.lua'
+          grep -q 'musical_draft' 'Composition Studio.lua'
+      - name: Publish
+        run: |
+          git config user.name 'wibem1'
+          git config user.email 'wibem1@googlemail.com'
+          git add 'Composition Studio.lua'
+          git commit -m 'Composition Studio v0.5.15 fix title helper scope'
+          git push origin HEAD:composition-studio
